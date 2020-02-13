@@ -42,7 +42,7 @@
 #endif
 
 #ifdef USE_UDP
-	#include <Artnet_old.h>
+	#include <Artnet.h>
 	#include <AsyncUDP_big.h>
 #endif
 
@@ -137,7 +137,7 @@ enum ANIM {
 
 #ifdef USE_UDP
 	AsyncUDP_big	udp;
-	Artnet_old		artnet;
+	Artnet			artnet;
 #endif
 
 uint8_t			led_state = 0;
