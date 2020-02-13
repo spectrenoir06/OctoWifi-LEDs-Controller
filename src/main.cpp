@@ -16,6 +16,7 @@
 
 #define USE_UDP
 #define USE_BROTLI
+#define USE_ZLIB
 
 #define PRINT_FPS
 // #define PRINT_DEBUG
@@ -43,6 +44,10 @@
 #ifdef USE_UDP
 	#include <Artnet_old.h>
 	#include <AsyncUDP_big.h>
+#endif
+
+#if defined(USE_ZLIB)
+	#include <miniz.c>
 #endif
 
 #if defined(USE_BROTLI) || defined(USE_ANIM)
@@ -118,6 +123,10 @@ enum UDP_PACKET {
 
 	LED_BRO_888 = 13,
 	LED_BRO_888_UPDATE = 14,
+
+	LED_Z_888 = 15,
+	LED_Z_888_UPDATE = 16,
+
 };
 
 enum ANIM {
@@ -326,6 +335,18 @@ unsigned long frameLastCounter = frameCounter;
 					(const uint8_t *)data,
 					&un_size,
 					(uint8_t*)leds
+				);
+				LEDS.show();
+				frameCounter++;
+				break;
+			#endif
+			#ifdef USE_ZLIB
+			case LED_Z_888_UPDATE:
+				uncompress(
+					(uint8_t*)leds,
+					(long unsigned int*)&un_size,
+					(const uint8_t *)data,
+					len-6
 				);
 				LEDS.show();
 				frameCounter++;
