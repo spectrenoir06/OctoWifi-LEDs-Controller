@@ -10,9 +10,9 @@
 // #define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
 // #define USE_OTA				// Activate Over the Air Update
-// #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
-// #define USE_FTP					// activate FTP server (need USE ANIM)
-#define USE_8_OUTPUT			// active 8 LEDs output
+#define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
+#define USE_FTP					// activate FTP server (need USE ANIM)
+// #define USE_8_OUTPUT			// active 8 LEDs output
 
 #define USE_UDP
 #define USE_BROTLI
@@ -439,6 +439,10 @@ void setup() {
 			artnet.begin();
 			artnet.setArtDmxCallback(onDmxFrame);
 			artnet.setArtSyncCallback(onSync);
+
+			#ifdef USE_AP
+				artnet.setIp(WiFi.softAPIP());
+			#endif
 		}
 	#endif
 
