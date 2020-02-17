@@ -84,7 +84,7 @@
 #else
 	#define NUM_STRIPS	1
 #endif
-#define LEDS_BY_UNI		1
+#define LEDS_BY_UNI		170
 #define LED_BY_STRIP	512 //(UNI_BY_STRIP*LEDS_BY_UNI)
 #define LED_TOTAL		(LED_BY_STRIP*NUM_STRIPS)
 #define LED_VCC			5	// 5V
@@ -343,7 +343,7 @@ unsigned long frameLastCounter = frameCounter;
 			#ifdef USE_ZLIB
 			case LED_Z_888_UPDATE:
 				uncompress(
-					(uint8_t*)leds,
+					(uint8_t*)(leds+leds_off),
 					(long unsigned int*)&un_size,
 					(const uint8_t *)data,
 					len-6
