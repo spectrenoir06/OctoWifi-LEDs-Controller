@@ -12,7 +12,7 @@
 // #define USE_OTA				// Activate Over the Air Update
 #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
 #define USE_FTP					// activate FTP server (need USE ANIM)
-// #define USE_8_OUTPUT			// active 8 LEDs output
+#define USE_8_OUTPUT			// active 8 LEDs output
 
 #define USE_UDP
 #define USE_BROTLI
@@ -78,14 +78,14 @@
 #define BRIGHTNESS		255
 
 #define START_UNI		0
-#define UNI_BY_STRIP	2
+#define UNI_BY_STRIP	4
 #ifdef USE_8_OUTPUT
 	#define NUM_STRIPS	8
 #else
 	#define NUM_STRIPS	1
 #endif
 #define LEDS_BY_UNI		170
-#define LED_BY_STRIP	512 //(UNI_BY_STRIP*LEDS_BY_UNI)
+#define LED_BY_STRIP	(UNI_BY_STRIP*LEDS_BY_UNI)
 #define LED_TOTAL		(LED_BY_STRIP*NUM_STRIPS)
 #define LED_VCC			5	// 5V
 #define LED_MAX_CURRENT	500	// 2000mA
@@ -436,7 +436,7 @@ void setup() {
 			Serial.printf("UDP server started on port %d\n", UDP_PORT);
 			udp.onPacket(udp_receive);
 
-			artnet.begin();
+			artnet.begin(NUM_STRIPS, UNI_BY_STRIP);
 			artnet.setArtDmxCallback(onDmxFrame);
 			artnet.setArtSyncCallback(onSync);
 
