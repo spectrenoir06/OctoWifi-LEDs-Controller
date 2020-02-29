@@ -4,15 +4,16 @@
 // #define FASTLED_ALLOW_INTERRUPTS
 #include <FastLED.h>
 
-// #define USE_AP				// The driver start has a WiFi Acess point
+#define USE_AP				// The driver start has a WiFi Acess point
 // #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
-#define USE_WIFI_MANAGER		// The driver use Wifi manager
+// #define USE_WIFI_MANAGER		// The driver use Wifi manager
+
 // #define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
-// #define USE_OTA				// Activate Over the Air Update
+// #define USE_OTA					// Activate Over the Air Update
 #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
 #define USE_FTP					// activate FTP server (need USE ANIM)
-#define USE_8_OUTPUT			// active 8 LEDs output
+// #define USE_8_OUTPUT			// active 8 LEDs output
 
 #define USE_UDP
 #define USE_BROTLI
@@ -22,6 +23,53 @@
 // #define PRINT_DEBUG
 // #define PRINT_DMX
 // #define PRINT_RLE
+
+#define FIRMWARE_VERSION	"1.0"
+
+#define DEFAULT_HOSTNAME	"ESP32_LEDs"
+#define AP_PASSWORD			"WIFI_PASSWORD"
+
+#define WIFI_SSID			""
+#define WIFI_PASSWORD		""
+
+#define FTP_USER			"LED"
+#define FTP_PASS			"LED"
+
+#define ART_NET_PORT		6454
+#define UDP_PORT			ART_NET_PORT
+#define OTA_PORT			3232
+
+#define LED_TYPE			WS2812B
+#define COLOR_ORDER			GRB
+#define BRIGHTNESS			255
+
+#ifdef USE_8_OUTPUT
+	#define NUM_STRIPS	8
+#else
+	#define NUM_STRIPS	1
+#endif
+
+
+const int START_UNI			= 0;
+const int UNI_BY_STRIP		= 4;
+const int LEDS_BY_UNI		= 170;
+const int LED_BY_STRIP		= 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
+const int LED_TOTAL			= (LED_BY_STRIP*NUM_STRIPS);
+
+#define LED_VCC				5	// 5V
+#define LED_MAX_CURRENT		500  // 2000mA
+
+const int RESET_WIFI_PIN	= 23;
+
+const int LED_PORT_0 		= 13; // 16
+const int LED_PORT_1 		= 4;
+const int LED_PORT_2 		= 2;
+const int LED_PORT_3 		= 22;
+const int LED_PORT_4 		= 19;
+const int LED_PORT_5 		= 18;
+const int LED_PORT_6 		= 21;
+const int LED_PORT_7 		= 17;
+
 
 #ifdef USE_WIFI_MANAGER
 	#include <DNSServer.h>
@@ -58,48 +106,6 @@
 	#include <SimpleTimer.h>
 #endif
 
-#define FIRMWARE_VERSION	"1.0"
-
-#define DEFAULT_HOSTNAME	"ESP32_LEDs"
-#define AP_PASSWORD			"WIFI_PASSWORD"
-
-#define WIFI_SSID			""
-#define WIFI_PASSWORD		""
-
-#define FTP_USER			"LED"
-#define FTP_PASS			"LED"
-
-#define ART_NET_PORT	6454
-#define UDP_PORT		ART_NET_PORT
-#define OTA_PORT		8266
-
-#define LED_TYPE		WS2812B
-#define COLOR_ORDER		GRB
-#define BRIGHTNESS		255
-
-#define START_UNI		0
-#define UNI_BY_STRIP	4
-#ifdef USE_8_OUTPUT
-	#define NUM_STRIPS	8
-#else
-	#define NUM_STRIPS	1
-#endif
-#define LEDS_BY_UNI		170
-#define LED_BY_STRIP	(UNI_BY_STRIP*LEDS_BY_UNI)
-#define LED_TOTAL		(LED_BY_STRIP*NUM_STRIPS)
-#define LED_VCC			5	// 5V
-#define LED_MAX_CURRENT	500	// 2000mA
-
-#define RESET_WIFI_PIN	23
-
-#define LED_PORT_0		13 // 16
-#define LED_PORT_1		4
-#define LED_PORT_2		2
-#define LED_PORT_3		22
-#define LED_PORT_4		19
-#define LED_PORT_5		18
-#define LED_PORT_6		21
-#define LED_PORT_7		17
 
 enum UDP_PACKET {
 	LED_RGB_888 = 0,
@@ -175,8 +181,6 @@ char 		firmware[20] = FIRMWARE_VERSION;
 
 CRGB		leds[LED_TOTAL];
 
-int			Pins[8] = {LED_PORT_0,LED_PORT_1,LED_PORT_2,LED_PORT_3,LED_PORT_4,LED_PORT_5,LED_PORT_6,LED_PORT_7};
-
 #ifdef PRINT_FPS
 	SimpleTimer	timer;
 #endif
@@ -233,7 +237,7 @@ unsigned long frameLastCounter = frameCounter;
 
 		uint16_t off  = (universe - START_UNI) * LEDS_BY_UNI * 3;
 
-		memcpy(((uint8_t*)leds) + off, data, LEDS_BY_UNI*3);
+		memcpy(((uint8_t*)leds) + off, data, length);
 		// if (universe==3)
 			// LEDS.show();
 	}
@@ -451,6 +455,7 @@ void setup() {
 		ArduinoOTA.setHostname(hostname);
 
 		ArduinoOTA.onStart([]() {
+			anim = ANIM_UDP;
 			String type;
 			if (ArduinoOTA.getCommand() == U_FLASH)
 				type = "sketch";
