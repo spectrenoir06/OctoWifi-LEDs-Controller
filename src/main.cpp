@@ -4,22 +4,22 @@
 // #define FASTLED_ALLOW_INTERRUPTS
 #include <FastLED.h>
 
-#define USE_AP				// The driver start has a WiFi Acess point
+// #define USE_AP				// The driver start has a WiFi Acess point
 // #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
-// #define USE_WIFI_MANAGER		// The driver use Wifi manager
+#define USE_WIFI_MANAGER		// The driver use Wifi manager
 
-// #define USE_RESET_BUTTON		// Can reset Wifi manager with button
+#define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
 // #define USE_OTA					// Activate Over the Air Update
-#define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
+// #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
 #define USE_FTP					// activate FTP server (need USE ANIM)
 // #define USE_8_OUTPUT			// active 8 LEDs output
 
 #define USE_UDP
-#define USE_BROTLI
+// #define USE_BROTLI
 #define USE_ZLIB
 
-#define PRINT_FPS
+// #define PRINT_FPS
 // #define PRINT_DEBUG
 // #define PRINT_DMX
 // #define PRINT_RLE
@@ -49,19 +49,20 @@
 	#define NUM_STRIPS	1
 #endif
 
+char mqtt_server[40];
 
 const int START_UNI			= 0;
 const int UNI_BY_STRIP		= 4;
 const int LEDS_BY_UNI		= 170;
-const int LED_BY_STRIP		= 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
+const int LED_BY_STRIP		= 150;	//(UNI_BY_STRIP*LEDS_BY_UNI)
 const int LED_TOTAL			= (LED_BY_STRIP*NUM_STRIPS);
 
 #define LED_VCC				5	// 5V
-#define LED_MAX_CURRENT		500  // 2000mA
+#define LED_MAX_CURRENT		2400  // 2000mA
 
-const int RESET_WIFI_PIN	= 23;
+const int RESET_WIFI_PIN	= 39;//23;
 
-const int LED_PORT_0 		= 13; // 16
+const int LED_PORT_0 		= 16;
 const int LED_PORT_1 		= 4;
 const int LED_PORT_2 		= 2;
 const int LED_PORT_3 		= 22;
@@ -72,8 +73,6 @@ const int LED_PORT_7 		= 17;
 
 
 #ifdef USE_WIFI_MANAGER
-	#include <DNSServer.h>
-	#include <WebServer.h>
 	#include <WiFiManager.h>
 #endif
 
@@ -149,10 +148,6 @@ enum ANIM {
 uint8_t			led_state = 0;
 uint16_t		paquet_count = 0;
 
-#ifdef USE_WIFI_MANAGER
-	WiFiManager	wifiManager;
-#endif
-
 #ifdef USE_FTP
 	FtpServer ftpSrv;
 #endif
@@ -179,7 +174,9 @@ uint16_t		paquet_count = 0;
 char 		hostname[50] = DEFAULT_HOSTNAME;
 char 		firmware[20] = FIRMWARE_VERSION;
 
-CRGB		leds[LED_TOTAL];
+CRGB		*leds;
+
+WiFiManager	wifiManager;
 
 #ifdef PRINT_FPS
 	SimpleTimer	timer;
@@ -204,6 +201,10 @@ unsigned long frameLastCounter = frameCounter;
 	void saveConfigCallback () {
 		Serial.println("Should save config");
 		shouldSaveConfig = true;
+	}
+
+	void start_config() {
+
 	}
 #endif
 
@@ -367,9 +368,11 @@ unsigned long frameLastCounter = frameCounter;
 
 void setup() {
 	Serial.begin(115200);
+	WiFi.mode(WIFI_STA);
 
 	#if defined(USE_WIFI_MANAGER) && defined(USE_RESET_BUTTON)
 		pinMode(RESET_WIFI_PIN, INPUT);
+		digitalWrite(RESET_WIFI_PIN, HIGH);
 	#endif
 
 	Serial.println("\n------------------------------");
@@ -379,6 +382,8 @@ void setup() {
 	Serial.print("  Main code running on core ");
 	Serial.println(core);
 	Serial.println("------------------------------");
+
+	leds = (CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
 
 	#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE,LED_PORT_0,COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
@@ -398,36 +403,47 @@ void setup() {
 	#endif
 	Serial.println("LEDs driver start");
 
-	#if defined(USE_WIFI_MANAGER)
-		wifiManager.setTimeout(180);
-		wifiManager.setConfigPortalTimeout(180); // try for 3 minute
-		wifiManager.setMinimumSignalQuality(15);
-		wifiManager.setRemoveDuplicateAPs(true);
-		wifiManager.setSaveConfigCallback(saveConfigCallback);
-		wifiManager.autoConnect("ESP32_LEDs");
-		Serial.println("Wifi Manager start");
+	wifiManager.setDebugOutput(false);
+	wifiManager.setTimeout(180);
+	wifiManager.setConfigPortalTimeout(180); // try for 3 minute
+	wifiManager.setMinimumSignalQuality(15);
+	wifiManager.setRemoveDuplicateAPs(true);
+	wifiManager.setSaveConfigCallback(saveConfigCallback);
 
-	#elif defined(USE_AP)
-		Serial.println("Setting AP (Access Point)");
-		WiFi.softAP("ESP32_LEDs_AP", AP_PASSWORD);
-		IPAddress IP = WiFi.softAPIP();
-		Serial.print("AP IP address: ");
-		Serial.println(IP);
 
-	#elif defined(USE_WIFI)
-		WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-		uint8_t retryCounter = 0;
-		while (WiFi.status() != WL_CONNECTED) {
-			delay(1000);
-			Serial.println("Establishing connection to WiFi..");
-			retryCounter++;
-			if (retryCounter>5) {
-				Serial.println("Could not connect, restarting");
-				delay(10);
-				ESP.restart();
-			}
+	WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+	wifiManager.addParameter(&custom_mqtt_server);
+
+	// std::vector<const char *> menu = {"wifi","info","param","sep","restart","exit"};
+	std::vector<const char *> menu = {"wifi","info","param","sep","restart"};
+	wifiManager.setMenu(menu);
+
+	// wifiManager.setParamsPage(true);
+	wifiManager.setCountry("US");
+	wifiManager.setHostname(hostname);
+
+	if (!digitalRead(RESET_WIFI_PIN)) {
+		Serial.printf("Start config\n");
+		wifiManager.startConfigPortal("ESP32_LEDs");
+	}
+	else {
+		bool rest = wifiManager.autoConnect("ESP32_LEDs");
+
+		if (rest) {
+			Serial.println("Wifi connected");
+			wifiManager.setConfigPortalBlocking(false);
+			wifiManager.startWebPortal();
 		}
-	#endif
+		else
+			ESP.restart();
+	}
+
+	// #elif defined(USE_AP)
+		// Serial.println("Setting AP (Access Point)");
+		// WiFi.softAP("ESP32_LEDs_AP", AP_PASSWORD);
+		// IPAddress IP = WiFi.softAPIP();
+		// Serial.print("AP IP address: ");
+		// Serial.println(IP);
 
 	Serial.print("Connected to:\t");
 	Serial.println(WiFi.SSID());
@@ -554,6 +570,7 @@ void setup() {
 #endif
 
 void loop(void) {
+	wifiManager.process();
 	#ifdef PRINT_FPS
 		timer.run();
 	#endif
@@ -568,9 +585,10 @@ void loop(void) {
 
 	#if defined(USE_WIFI_MANAGER) && defined(USE_RESET_BUTTON)
 		if (!digitalRead(RESET_WIFI_PIN)) {
-			Serial.println("Reset Wifi");
+			Serial.printf("Press reset Wifi\nStart config\n");
+			wifiManager.setConfigPortalBlocking(true);
 			wifiManager.startConfigPortal("ESP32_LEDs");
-			delay(500);
+			Serial.printf("Finish config reset\n");
 			ESP.restart();
 		}
 	#endif
