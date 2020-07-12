@@ -14,10 +14,11 @@
 // #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
 //#define USE_FTP					// activate FTP server (need USE ANIM)
 // #define USE_8_OUTPUT			// active 8 LEDs output
+// #define USE_CONFIG
 
 #define USE_UDP
-// #define USE_BROTLI
 #define USE_ZLIB
+// #define USE_BROTLI
 
 // #define PRINT_FPS
 // #define PRINT_DEBUG
@@ -74,11 +75,10 @@ const int LED_PORT_7 		= 17;
 	#include <WiFiManager.h>
 #endif
 
-// #ifdef USE_ANIM
+#ifdef USE_CONFIG
 	#include "SPIFFS.h"
 	#include <ArduinoJson.h>
-
-// #endif
+#endif
 
 #ifdef USE_FTP
 	#include <ESP8266FtpServer.h>
@@ -152,8 +152,11 @@ uint16_t		paquet_count = 0;
 	FtpServer ftpSrv;
 #endif
 
-File root;
-File file;
+#ifdef USE_CONFIG
+	File root;
+	File file;
+#endif
+
 #ifdef USE_ANIM
 
 	uint8_t buff[2000];
@@ -183,12 +186,15 @@ Config config;
 
 CRGB		*leds;
 
-WiFiManager	wifiManager;
-WiFiManagerParameter param_udp_port("udp_port", "UDP port", "6454", 6);
-// WiFiManagerParameter param_udp_port("LEDs type", "UDP port", "6454", 5);
+#ifdef USE_WIFI_MANAGER
+	WiFiManager	wifiManager;
+	#ifdef USE_CONFIG
+			WiFiManagerParameter param_udp_port("udp_port", "UDP port", "6454", 6);
+		// WiFiManagerParameter param_udp_port("LEDs type", "UDP port", "6454", 5);
 
-// WiFiManagerParameter custom_text("<select name=\"LEDs type\" id=\"leds_type\"><option value=\"WS2811 800kHz\">WS2811 800kHz</option><option value=\"WS2811 400kHz\">WS2811 400kHz</option><option value=\"WS2812\">WS2812</option><option value=\"WS2813\">WS2813</option><option value=\"SK6822\">SK6822</option></select>");
-
+		// WiFiManagerParameter custom_text("<select name=\"LEDs type\" id=\"leds_type\"><option value=\"WS2811 800kHz\">WS2811 800kHz</option><option value=\"WS2811 400kHz\">WS2811 400kHz</option><option value=\"WS2812\">WS2812</option><option value=\"WS2813\">WS2813</option><option value=\"SK6822\">SK6822</option></select>");
+	#endif
+#endif
 
 #ifdef PRINT_FPS
 	SimpleTimer	timer;
@@ -205,36 +211,36 @@ unsigned long frameLastCounter = frameCounter;
 	}
 #endif
 
+#ifdef USE_CONFIG
+	void saveConfiguration(const char *filename, const Config &config) {
+		// Delete existing file, otherwise the configuration is appended to the file
+		SPIFFS.remove(filename);
 
-void saveConfiguration(const char *filename, const Config &config) {
-	// Delete existing file, otherwise the configuration is appended to the file
-	SPIFFS.remove(filename);
+		// Open file for writing
+		File file = SPIFFS.open(filename, FILE_WRITE);
+		if (!file) {
+			Serial.println(F("Failed to create file"));
+			return;
+		}
 
-	// Open file for writing
-	File file = SPIFFS.open(filename, FILE_WRITE);
-	if (!file) {
-		Serial.println(F("Failed to create file"));
-		return;
+		// Allocate a temporary JsonDocument
+		// Don't forget to change the capacity to match your requirements.
+		// Use arduinojson.org/assistant to compute the capacity.
+		StaticJsonDocument<256> doc;
+
+		// Set the values in the document
+		doc["udp_port"] = config.udp_port | UDP_PORT;
+
+		// Serialize JSON to file
+		if (serializeJson(doc, file) == 0) {
+			Serial.println(F("Failed to write to file"));
+		}
+
+		// Close the file
+		file.close();
 	}
 
-	// Allocate a temporary JsonDocument
-	// Don't forget to change the capacity to match your requirements.
-	// Use arduinojson.org/assistant to compute the capacity.
-	StaticJsonDocument<256> doc;
-
-	// Set the values in the document
-	doc["udp_port"] = config.udp_port | UDP_PORT;
-
-	// Serialize JSON to file
-	if (serializeJson(doc, file) == 0) {
-		Serial.println(F("Failed to write to file"));
-	}
-
-	// Close the file
-	file.close();
-}
-
-void printFile(const char *filename) {
+	void printFile(const char *filename) {
 	// Open file for reading
 	File file = SPIFFS.open(filename);
 	if (!file) {
@@ -251,7 +257,7 @@ void printFile(const char *filename) {
 	// Close the file
 	file.close();
 }
-
+#endif
 
 #ifdef USE_WIFI_MANAGER
 	//flag for saving data
@@ -442,18 +448,20 @@ void setup() {
 	// #ifdef USE_ANIM
 	// #endif
 
-	if(!SPIFFS.begin(true)){
-		Serial.println("An Error has occurred while mounting SPIFFS");
-		ESP.restart();
-	}
-	Serial.println("mounting SPIFFS OK");
+	#ifdef USE_CONFIG
+		if(!SPIFFS.begin(true)){
+			Serial.println("An Error has occurred while mounting SPIFFS");
+			ESP.restart();
+		}
+		Serial.println("mounting SPIFFS OK");
 
-	root = SPIFFS.open("/");
-	file = root.openNextFile();
+		root = SPIFFS.open("/");
+		file = root.openNextFile();
 
-	printFile(filename);
+		printFile(filename);
 
-	saveConfiguration(filename, config);
+		saveConfiguration(filename, config);
+	#endif
 
 	leds = (CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
 
@@ -475,52 +483,58 @@ void setup() {
 	#endif
 	Serial.println("LEDs driver start");
 
-	wifiManager.setDebugOutput(false);
-	wifiManager.setTimeout(180);
-	wifiManager.setConfigPortalTimeout(180); // try for 3 minute
-	wifiManager.setMinimumSignalQuality(15);
-	wifiManager.setRemoveDuplicateAPs(true);
-	wifiManager.setSaveConfigCallback(saveConfigCallback);
+	#ifdef USE_WIFI_MANAGER
 
+		wifiManager.setDebugOutput(false);
+		wifiManager.setTimeout(180);
+		wifiManager.setConfigPortalTimeout(180); // try for 3 minute
+		wifiManager.setMinimumSignalQuality(15);
+		wifiManager.setRemoveDuplicateAPs(true);
+		wifiManager.setSaveConfigCallback(saveConfigCallback);
 
-	wifiManager.addParameter(&param_udp_port);
-	// wifiManager.addParameter(&custom_text);
+		#ifdef USE_CONFIG
+			wifiManager.addParameter(&param_udp_port);
+			// wifiManager.addParameter(&custom_text);
+		#endif
 
-	wifiManager.setClass("invert"); // dark theme
+		wifiManager.setClass("invert"); // dark theme
 
-	// std::vector<const char *> menu = {"wifi","info","param","sep","restart","exit"};
-	std::vector<const char *> menu = {"param","wifi","info","sep","restart"};
-	wifiManager.setMenu(menu);
+		// std::vector<const char *> menu = {"wifi","info","param","sep","restart","exit"};
+		#ifdef USE_CONFIG
+			std::vector<const char *> menu = {"param","wifi","info","sep","restart"};
+		#else
+			std::vector<const char *> menu = {"wifi","info","sep","restart"};
+		#endif
+		wifiManager.setMenu(menu);
 
-	// wifiManager.setParamsPage(true);
-	wifiManager.setCountry("US");
-	wifiManager.setHostname(hostname);
+		// wifiManager.setParamsPage(true);
+		wifiManager.setCountry("US");
+		wifiManager.setHostname(hostname);
 
-	#ifdef USE_RESET_BUTTON
+		#ifdef USE_RESET_BUTTON
 
-	if (!digitalRead(RESET_WIFI_PIN)) {
-		Serial.printf("Start config\n");
-		wifiManager.startConfigPortal("ESP32_LEDs");
-	}
-	else
-	#endif
-	{
-		bool rest = wifiManager.autoConnect("ESP32_LEDs");
-
-		if (rest) {
-			Serial.println("Wifi connected");
+		if (!digitalRead(RESET_WIFI_PIN)) {
+			Serial.printf("Start config\n");
+			wifiManager.startConfigPortal("ESP32_LEDs");
 		}
 		else
-		ESP.restart();
-	}
+		#endif
+		{
+			bool rest = wifiManager.autoConnect("ESP32_LEDs");
 
-
-	// #elif defined(USE_AP)
-		// Serial.println("Setting AP (Access Point)");
-		// WiFi.softAP("ESP32_LEDs_AP", AP_PASSWORD);
-		// IPAddress IP = WiFi.softAPIP();
-		// Serial.print("AP IP address: ");
-		// Serial.println(IP);
+			if (rest) {
+				Serial.println("Wifi connected");
+			}
+			else
+			ESP.restart();
+		}
+	#elif defined(USE_AP)
+		Serial.println("Setting AP (Access Point)");
+		WiFi.softAP("ESP32_LEDs_AP", AP_PASSWORD);
+		IPAddress IP = WiFi.softAPIP();
+		Serial.print("AP IP address: ");
+		Serial.println(IP);
+	#endif
 
 	Serial.print("Connected to:\t");
 	Serial.println(WiFi.SSID());
@@ -528,8 +542,10 @@ void setup() {
 	Serial.println(WiFi.localIP());
 	WiFi.setSleep(false);
 
-	wifiManager.setConfigPortalBlocking(false);
-	wifiManager.startWebPortal();
+	#ifdef USE_WIFI_MANAGER
+		wifiManager.setConfigPortalBlocking(false);
+		wifiManager.startWebPortal();
+	#endif
 
 	#ifdef USE_UDP
 		if(udp.listen(UDP_PORT)) {
@@ -639,7 +655,10 @@ void setup() {
 #endif
 
 void loop(void) {
-	wifiManager.process();
+	#ifdef USE_WIFI_MANAGER
+		wifiManager.process();
+	#endif
+
 	#ifdef PRINT_FPS
 		timer.run();
 	#endif
