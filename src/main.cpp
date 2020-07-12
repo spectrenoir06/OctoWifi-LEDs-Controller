@@ -10,11 +10,12 @@
 
 //#define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
-// #define USE_OTA					// Activate Over the Air Update
-// #define USE_ANIM				// activate animation in SPI filesysteme (need BROTLI)
-//#define USE_FTP					// activate FTP server (need USE ANIM)
-// #define USE_8_OUTPUT			// active 8 LEDs output
-// #define USE_CONFIG
+// #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
+// #define USE_OTA				// Activate Over the Air Update
+// #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
+// #define USE_FTP				// Activate FTP server (need USE ANIM)
+// #define USE_8_OUTPUT			// Activate 8 LEDs output
+// #define USE_CONFIG			// Activate config menu on WifiManger
 
 #define USE_UDP
 #define USE_ZLIB
@@ -28,6 +29,8 @@
 #define FIRMWARE_VERSION	"1.0"
 
 #define DEFAULT_HOSTNAME	"ESP32_LEDs"
+
+#define AP_SSID				"ESP32_LEDs_AP"
 #define AP_PASSWORD			"WIFI_PASSWORD"
 
 #define WIFI_SSID			""
@@ -75,8 +78,11 @@ const int LED_PORT_7 		= 17;
 	#include <WiFiManager.h>
 #endif
 
-#ifdef USE_CONFIG
+#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 	#include "SPIFFS.h"
+#endif
+
+#ifdef USE_CONFIG
 	#include <ArduinoJson.h>
 #endif
 
@@ -93,7 +99,7 @@ const int LED_PORT_7 		= 17;
 	#include <AsyncUDP_big.h>
 #endif
 
-#if defined(USE_ZLIB)
+#ifdef USE_ZLIB
 	#include <miniz.c>
 #endif
 
@@ -445,15 +451,15 @@ void setup() {
 	Serial.println(core);
 	Serial.println("------------------------------");
 
-	// #ifdef USE_ANIM
-	// #endif
-
-	#ifdef USE_CONFIG
+	#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 		if(!SPIFFS.begin(true)){
 			Serial.println("An Error has occurred while mounting SPIFFS");
 			ESP.restart();
 		}
 		Serial.println("mounting SPIFFS OK");
+	#endif
+
+	#ifdef USE_CONFIG
 
 		root = SPIFFS.open("/");
 		file = root.openNextFile();
@@ -478,7 +484,7 @@ void setup() {
 		LEDS.addLeds<LED_TYPE,LED_PORT_0,COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 	LEDS.setBrightness(BRIGHTNESS);
-	#ifdef LED_MAX_CURRENT
+	#ifdef USE_POWER_LIMITER
 		LEDS.setMaxPowerInVoltsAndMilliamps(LED_VCC, LED_MAX_CURRENT);
 	#endif
 	Serial.println("LEDs driver start");
@@ -530,7 +536,7 @@ void setup() {
 		}
 	#elif defined(USE_AP)
 		Serial.println("Setting AP (Access Point)");
-		WiFi.softAP("ESP32_LEDs_AP", AP_PASSWORD);
+		WiFi.softAP(AP_SSID, AP_PASSWORD);
 		IPAddress IP = WiFi.softAPIP();
 		Serial.print("AP IP address: ");
 		Serial.println(IP);
