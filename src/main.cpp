@@ -534,6 +534,19 @@ void setup() {
 		IPAddress IP = WiFi.softAPIP();
 		Serial.print("AP IP address: ");
 		Serial.println(IP);
+	#elif defined(USE_WIFI)
+		WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+		uint8_t retryCounter = 0;
+		while (WiFi.status() != WL_CONNECTED) {
+			delay(1000);
+			Serial.println("Establishing connection to WiFi..");
+			retryCounter++;
+			if (retryCounter>5) {
+				Serial.println("Could not connect, restarting");
+				delay(10);
+				ESP.restart();
+			}
+		}
 	#endif
 
 	Serial.print("Connected to:\t");
