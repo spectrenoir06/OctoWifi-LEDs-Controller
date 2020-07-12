@@ -3,6 +3,8 @@ OctoWifi-LEDs Controller
 
 https://antoine.doussaud.org/esp32_LED
 
+### You must install https://platformio.org/
+
 ## Feature
  - Can wok with x8 WS2812b LEDs strip at the same time
  - Can drive 8000 WS2812 LEDs at 30Hz or 4000 WS2812 LEDs at 60Hz
