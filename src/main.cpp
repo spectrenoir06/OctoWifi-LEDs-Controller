@@ -10,10 +10,10 @@
 
 //#define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
-// #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
+#define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
 // #define USE_OTA				// Activate Over the Air Update
-// #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
-// #define USE_FTP				// Activate FTP server (need USE ANIM)
+#define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
+#define USE_FTP				// Activate FTP server (need USE ANIM)
 // #define USE_8_OUTPUT			// Activate 8 LEDs output
 // #define USE_CONFIG			// Activate config menu on WifiManger
 
@@ -21,7 +21,7 @@
 #define USE_ZLIB
 // #define USE_BROTLI
 
-// #define PRINT_FPS
+#define PRINT_FPS
 // #define PRINT_DEBUG
 // #define PRINT_DMX
 // #define PRINT_RLE
@@ -53,18 +53,20 @@
 	#define NUM_STRIPS	1
 #endif
 
-const int START_UNI			= 0;
+const int BUFFER_SIZE (4096*3);
+
+const int START_UNI = 0;
 const int UNI_BY_STRIP		= 4;
 const int LEDS_BY_UNI		= 170;
-const int LED_BY_STRIP		= 150;	//(UNI_BY_STRIP*LEDS_BY_UNI)
-const int LED_TOTAL			= (LED_BY_STRIP*NUM_STRIPS);
+const int LED_BY_STRIP		= 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
+const int LED_TOTAL			= 4096;//(LED_BY_STRIP*NUM_STRIPS);
 
 #define LED_VCC				5	// 5V
-#define LED_MAX_CURRENT		2400  // 2000mA
+#define LED_MAX_CURRENT		800  // 2000mA
 
 const int RESET_WIFI_PIN	= 39;//23;
 
-const int LED_PORT_0 		= 16;
+const int LED_PORT_0 		= 13;//16;
 const int LED_PORT_1 		= 4;
 const int LED_PORT_2 		= 2;
 const int LED_PORT_3 		= 22;
@@ -73,6 +75,30 @@ const int LED_PORT_5 		= 18;
 const int LED_PORT_6 		= 21;
 const int LED_PORT_7 		= 17;
 
+#define R1_PIN 25
+#define G1_PIN 26
+#define B1_PIN 27
+
+#define R2_PIN 14
+#define G2_PIN 12
+#define B2_PIN 21
+
+#define A_PIN 23
+#define B_PIN 19
+#define C_PIN 5
+#define D_PIN 33
+#define CLK_PIN 32
+#define LAT_PIN 4
+#define OE_PIN 22
+
+#define E_PIN -1
+
+#define MATRIX_WIDTH 128
+
+// #define USE_GFX_ROOT 1
+#define PIXEL_COLOR_DEPTH_BITS 6
+
+#include <ESP32-RGB64x32MatrixPanel-I2S-DMA.h>
 
 #ifdef USE_WIFI_MANAGER
 	#include <WiFiManager.h>
@@ -100,10 +126,10 @@ const int LED_PORT_7 		= 17;
 #endif
 
 #ifdef USE_ZLIB
-	#include <miniz.c>
+	#include <miniz.h>
 #endif
 
-#if defined(USE_BROTLI) || defined(USE_ANIM)
+#if defined(USE_BROTLI)
 	#include <brotli/decode.h>
 #endif
 
@@ -111,8 +137,8 @@ const int LED_PORT_7 		= 17;
 	#include <SimpleTimer.h>
 #endif
 
-
-enum UDP_PACKET {
+enum UDP_PACKET
+{
 	LED_RGB_888 = 0,
 	LED_RGB_888_UPDATE = 1,
 
@@ -138,6 +164,9 @@ enum UDP_PACKET {
 	LED_Z_888 = 15,
 	LED_Z_888_UPDATE = 16,
 
+	LED_Z_565 = 17,
+	LED_Z_565_UPDATE = 18,
+
 };
 
 enum ANIM {
@@ -158,22 +187,17 @@ uint16_t		paquet_count = 0;
 	FtpServer ftpSrv;
 #endif
 
-#ifdef USE_CONFIG
-	File root;
+#if defined(USE_CONFIG) || defined(USE_ANIM)
 	File file;
+	File root;
 #endif
 
-#ifdef USE_ANIM
-
-	uint8_t buff[2000];
+#ifdef USE_ANIM	
+	// size_t un_size = sizeof(buff);
+	uint16_t wait;
 	uint8_t head[5];
-
 	uint16_t fps;
 	uint16_t nb;
-	uint16_t wait;
-	uint16_t compress_size;
-	size_t un_size = sizeof(buff);
-
 	unsigned long previousMillis = 0;
 	uint8_t		anim = ANIM_START;
 #else
@@ -190,7 +214,12 @@ struct Config {
 const char *filename = "/config.txt";
 Config config;
 
-CRGB		*leds;
+// CRGB		leds[4096*2];
+// uint8_t		buffer[8192*3];
+// uint16_t 	buffer2[8192];
+
+CRGB *leds;// = (CRGB *)malloc(4096 * 4); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
+uint8_t *buffer;// = (uint8_t *)malloc(BUFFER_SIZE);
 
 #ifdef USE_WIFI_MANAGER
 	WiFiManager	wifiManager;
@@ -202,6 +231,8 @@ CRGB		*leds;
 	#endif
 #endif
 
+RGB64x32MatrixPanel_I2S_DMA dma_display(true);
+
 #ifdef PRINT_FPS
 	SimpleTimer	timer;
 #endif
@@ -211,8 +242,101 @@ unsigned long frameLastCounter = frameCounter;
 #ifdef PRINT_FPS
 	void timerCallback(){
 		if (frameLastCounter != frameCounter) {
-			Serial.printf("FPS: %lu Frames received: %lu\n", frameCounter-frameLastCounter, frameCounter);
+			Serial.printf("FPS: %lu Frames received: %lu\n", (frameCounter-frameLastCounter)/5, frameCounter);
 			frameLastCounter = frameCounter;
+		}
+	}
+#endif
+
+
+#ifdef USE_ANIM
+	void load_anim()
+	{
+		Serial.print("  FILE: ");
+		Serial.print(file.name());
+		Serial.print("\tSIZE: ");
+		Serial.println(file.size());
+
+		Serial.println("Open animation");
+
+		file.read(head, 5);
+
+		fps = (head[2] << 8) | head[1];
+		nb = (head[4] << 8) | head[3];
+		wait = 1000.0 / fps;
+		// compress_size = 0;
+
+		Serial.printf("  FPS: %02d; LEDs: %04d format: %d\n", fps, nb, head[0]);
+		anim = ANIM_PLAY;
+	}
+
+	// void save_anim()
+	// {
+	// 	file = SPIFFS.open("/test.Z565", FILE_WRITE);
+	// 	// Serial.print("  FILE: ");
+	// 	// Serial.print(file.name());
+	// 	// Serial.print("\tSIZE: ");
+	// 	// Serial.println(file.size());
+
+	// 	Serial.println("write animation");
+
+	// 	head[0] = 17;
+	// 	(uint16_t)head[1] = 60;
+	// 	(uint16_t)head[3] = 4096;
+
+	// 	file.write(head, 5);
+
+	// 	fps = (head[2] << 8) | head[1];
+	// 	nb = (head[4] << 8) | head[3];
+	// 	wait = 1000.0 / fps;
+	// 	compress_size = 0;
+
+	// 	Serial.printf("  FPS: %02d; LEDs: %04d format: %d\n", fps, nb, head[0]);
+	// 	anim = ANIM_PLAY;
+	// }
+
+	void read_anim_frame()
+	{
+		uint16_t compress_size;
+		unsigned long int un_size;
+		uint8_t buff_test[4096*2];
+
+		file.read((uint8_t *)&compress_size, 2);
+		uint16_t r = file.read(buffer, compress_size);
+
+		// Serial.printf("%x %x %x\n", buffer[0], buffer[1], buffer[2]);
+
+		// LEDS.show();
+
+		int ret = uncompress(
+			(uint8_t *)buff_test,
+			(long unsigned int *)&un_size,
+			(const uint8_t *)buffer,
+			BUFFER_SIZE
+		);
+
+		if (ret) 
+			Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), compress_size, un_size, r);
+
+		for (int i = 0; i < LED_TOTAL; i++) {
+			dma_display.drawPixel(i % 128, i / 128, ((uint16_t*)buff_test)[i]);
+		}
+
+		dma_display.showDMABuffer();
+		dma_display.flipDMABuffer();
+		frameCounter++;
+
+		if (!file.available())
+		{
+			anim = ANIM_START;
+			file.close();
+			file = root.openNextFile();
+			if (!file)
+			{
+				root.close();
+				root = SPIFFS.open("/");
+				file = root.openNextFile();
+			}
 		}
 	}
 #endif
@@ -364,16 +488,19 @@ unsigned long frameLastCounter = frameCounter;
 			case LED_RGB_565_UPDATE:
 				if (len - 6 == (leds_nb*2)) {
 					for (uint16_t i=0; i<leds_nb; i++) {
-						uint8_t r = ((((data16[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-						uint8_t g = ((((data16[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-						uint8_t b = (((data16[i] & 0x1F) * 527) + 23) >> 6;
-						leds[i] = r << 16 | g << 8 | b;
+						dma_display.drawPixelRGB565((i + leds_off) % MATRIX_WIDTH, (i + leds_off) / MATRIX_WIDTH, data16[i]);
+						// uint8_t r = ((((data16[i] >> 11) & 0x1F) * 527) + 23) >> 6;
+						// uint8_t g = ((((data16[i] >> 5) & 0x3F) * 259) + 33) >> 6;
+						// uint8_t b = (((data16[i] & 0x1F) * 527) + 23) >> 6;
+						// leds[i] = r << 16 | g << 8 | b;
 					}
 				}
 				else
 					Serial.println("Invalid LED_RGB_565 len");
 				if (type == LED_RGB_565_UPDATE) {
-					LEDS.show();
+					// LEDS.show();
+					dma_display.showDMABuffer();
+					dma_display.flipDMABuffer();
 					frameCounter++;
 				}
 			case LED_UPDATE:
@@ -397,7 +524,7 @@ unsigned long frameLastCounter = frameCounter;
 					}
 				}
 				if (type == LED_RLE_888_UPDATE) {
-					LEDS.show();
+					// LEDS.show();
 					frameCounter++;
 				}
 				break;
@@ -424,6 +551,30 @@ unsigned long frameLastCounter = frameCounter;
 				LEDS.show();
 				frameCounter++;
 				break;
+			case LED_Z_565:
+			case LED_Z_565_UPDATE:
+				memcpy(((uint8_t *)buffer) + leds_off, data, leds_nb);
+
+				if (type==LED_Z_565_UPDATE) {
+					uint16_t size = leds_off + leds_nb;
+					file.write((uint8_t *)&size, 2);
+					file.write(buffer, leds_off + leds_nb);
+					int ret = uncompress(
+						(uint8_t *)leds,
+						(long unsigned int *)&un_size,
+						(const uint8_t *)buffer,
+						BUFFER_SIZE
+					);
+
+					Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
+				
+					for (int i = 0; i < LED_TOTAL; i++)
+						dma_display.drawPixel(i % 128, i / 128, ((uint16_t *)leds)[i]);
+					dma_display.showDMABuffer();
+					dma_display.flipDMABuffer();
+					frameCounter++;
+				}
+				break;
 			#endif
 			default:
 				Serial.printf("UDP packet type unknown: %d\n", type);
@@ -433,6 +584,33 @@ unsigned long frameLastCounter = frameCounter;
 }
 
 #endif
+
+void taskTwo(void *parameter)
+{
+
+	#ifdef USE_ANIM
+	for (;;) {
+		switch (anim) {
+		case ANIM_START:
+			load_anim();
+			break;
+		case ANIM_PLAY:
+			if (millis() - previousMillis >= wait)
+			{
+				previousMillis = millis();
+				read_anim_frame();
+			}
+			break;
+		case ANIM_UDP:
+			break;
+		}
+		vTaskDelay(1 / portTICK_PERIOD_MS);
+	}
+	#endif
+
+	Serial.println("Ending task 1");
+	vTaskDelete(NULL);
+}
 
 void setup() {
 	Serial.begin(115200);
@@ -458,20 +636,22 @@ void setup() {
 		}
 		Serial.println("mounting SPIFFS OK");
 	#endif
+	
+	root = SPIFFS.open("/");
+	file = root.openNextFile();
 
 	#ifdef USE_CONFIG
 
-		root = SPIFFS.open("/");
-		file = root.openNextFile();
 
 		printFile(filename);
 
 		saveConfiguration(filename, config);
 	#endif
 
-	leds = (CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
+		leds = (CRGB *)malloc(BUFFER_SIZE); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
+		buffer = (uint8_t *)malloc(BUFFER_SIZE);
 
-	#ifdef USE_8_OUTPUT
+#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE,LED_PORT_0,COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 		LEDS.addLeds<LED_TYPE,LED_PORT_1,COLOR_ORDER>(leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 		LEDS.addLeds<LED_TYPE,LED_PORT_2,COLOR_ORDER>(leds, 2 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
@@ -489,7 +669,21 @@ void setup() {
 	#endif
 	Serial.println("LEDs driver start");
 
-	#ifdef USE_WIFI_MANAGER
+	dma_display.begin(R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN);
+	dma_display.setPanelBrightness(32);
+	dma_display.clearScreen();
+
+	xTaskCreateUniversal(
+		taskTwo,   /* Task function. */
+		"TaskTwo", /* String with name of task. */
+		8192*4,	   /* Stack size in bytes. */
+		NULL,	   /* Parameter passed as input of the task */
+		1,		   /* Priority of the task. */
+		NULL,		   /* Task handle. */
+		1
+	);
+
+#ifdef USE_WIFI_MANAGER
 
 		wifiManager.setDebugOutput(false);
 		wifiManager.setTimeout(180);
@@ -626,52 +820,11 @@ void setup() {
 	#endif
 
 	#ifdef PRINT_FPS
-		timer.setTimer(1000, timerCallback, 6000); // Interval to measure FPS  (millis, function called, times invoked for 1000ms around 1 hr and half)
+		timer.setTimer(5000, timerCallback, 6000); // Interval to measure FPS  (millis, function called, times invoked for 1000ms around 1 hr and half)
 	#endif
+
+	// file = SPIFFS.open("/test.Z565", FILE_WRITE);
 }
-
-#ifdef USE_ANIM
-	void load_anim() {
-		Serial.print("  FILE: ");
-		Serial.print(file.name());
-		Serial.print("\tSIZE: ");
-		Serial.println(file.size());
-
-		Serial.println("Open animation");
-
-		file.read(head, 5);
-
-		fps				= (head[2] << 8) | head[1];
-		nb 				= (head[4] << 8) | head[3];
-		wait			= 1000.0 / fps;
-		compress_size	= 0;
-
-		Serial.printf("  FPS: %02d; LEDs: %04d format: %d\n", fps, nb, head[0]);
-		anim = ANIM_PLAY;
-	}
-
-	void read_anim_frame() {
-		file.read((uint8_t*)&compress_size, 2);
-		file.read(buff, compress_size);
-		BrotliDecoderDecompress(
-			compress_size,
-			(const uint8_t *)buff,
-			&un_size,
-			(uint8_t*)leds
-		);
-		LEDS.show();
-		if (!file.available()) {
-			anim = ANIM_START;
-			file.close();
-			file = root.openNextFile();
-			if (!file) {
-				root.close();
-				root = SPIFFS.open("/");
-				file = root.openNextFile();
-			}
-		}
-	}
-#endif
 
 void loop(void) {
 	#ifdef USE_WIFI_MANAGER
@@ -700,19 +853,6 @@ void loop(void) {
 		}
 	#endif
 
-	#ifdef USE_ANIM
-		switch (anim) {
-			case ANIM_START:
-				load_anim();
-				break;
-			case ANIM_PLAY:
-				if (millis() - previousMillis >= wait) {
-					previousMillis = millis();
-					read_anim_frame();
-				}
-				break;
-			case ANIM_UDP:
-				break;
-		}
-	#endif
+
 }
+
