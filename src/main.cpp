@@ -13,13 +13,15 @@
 #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
 // #define USE_OTA				// Activate Over the Air Update
 #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
-#define USE_FTP				// Activate FTP server (need USE ANIM)
+// #define USE_FTP				// Activate FTP server (need USE ANIM)
 // #define USE_8_OUTPUT			// Activate 8 LEDs output
 // #define USE_CONFIG			// Activate config menu on WifiManger
 
 #define USE_UDP
 #define USE_ZLIB
 // #define USE_BROTLI
+
+#define USE_SD
 
 #define PRINT_FPS
 // #define PRINT_DEBUG
@@ -79,7 +81,7 @@ const int LED_PORT_7 		= 17;
 #define G1_PIN 26
 #define B1_PIN 27
 
-#define R2_PIN 14
+#define R2_PIN 18
 #define G2_PIN 12
 #define B2_PIN 21
 
@@ -105,7 +107,19 @@ const int LED_PORT_7 		= 17;
 #endif
 
 #if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
-	#include "SPIFFS.h"
+	#ifdef USE_SD
+		#include "FS.h"
+		#include "SD.h"
+		#include "SPI.h"
+		const int SD_CS   = 13;
+		const int SD_MOSI = 15;
+		const int SD_SCK  = 14;
+		const int SD_MISO = 2;
+		#define filesyteme SD
+	#else
+		#include "SPIFFS.h"
+		#include filesyteme SPIFFS
+	#endif
 #endif
 
 #ifdef USE_CONFIG
@@ -252,19 +266,21 @@ unsigned long frameLastCounter = frameCounter;
 #ifdef USE_ANIM
 	void load_anim()
 	{
+		Serial.println("Open animation");
+
 		Serial.print("  FILE: ");
 		Serial.print(file.name());
 		Serial.print("\tSIZE: ");
-		Serial.println(file.size());
-
-		Serial.println("Open animation");
+		Serial.print(file.size() / (1024.0 * 1024.0));
+		Serial.println(" Mo");
 
 		file.read(head, 5);
 
 		fps = (head[2] << 8) | head[1];
 		nb = (head[4] << 8) | head[3];
 		wait = 1000.0 / fps;
-		// compress_size = 0;
+		if (wait > 2000)
+			wait = 100;
 
 		Serial.printf("  FPS: %02d; LEDs: %04d format: %d\n", fps, nb, head[0]);
 		anim = ANIM_PLAY;
@@ -304,7 +320,7 @@ unsigned long frameLastCounter = frameCounter;
 		file.read((uint8_t *)&compress_size, 2);
 		uint16_t r = file.read(buffer, compress_size);
 
-		// Serial.printf("%x %x %x\n", buffer[0], buffer[1], buffer[2]);
+		// Serial.printf("%d, %x %x %x\n", r, buffer[0], buffer[1], buffer[2]);
 
 		// LEDS.show();
 
@@ -328,13 +344,14 @@ unsigned long frameLastCounter = frameCounter;
 
 		if (!file.available())
 		{
+			// file.close();
 			anim = ANIM_START;
 			file.close();
 			file = root.openNextFile();
 			if (!file)
 			{
 				root.close();
-				root = SPIFFS.open("/");
+				root = filesyteme.open("/");
 				file = root.openNextFile();
 			}
 		}
@@ -557,8 +574,8 @@ unsigned long frameLastCounter = frameCounter;
 
 				if (type==LED_Z_565_UPDATE) {
 					uint16_t size = leds_off + leds_nb;
-					file.write((uint8_t *)&size, 2);
-					file.write(buffer, leds_off + leds_nb);
+					// file.write((uint8_t *)&size, 2);
+					// file.write(buffer, leds_off + leds_nb);
 					int ret = uncompress(
 						(uint8_t *)leds,
 						(long unsigned int *)&un_size,
@@ -629,29 +646,17 @@ void setup() {
 	Serial.println(core);
 	Serial.println("------------------------------");
 
-	#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
-		if(!SPIFFS.begin(true)){
-			Serial.println("An Error has occurred while mounting SPIFFS");
-			ESP.restart();
-		}
-		Serial.println("mounting SPIFFS OK");
-	#endif
 	
-	root = SPIFFS.open("/");
-	file = root.openNextFile();
 
 	#ifdef USE_CONFIG
-
-
 		printFile(filename);
-
 		saveConfiguration(filename, config);
 	#endif
 
 		leds = (CRGB *)malloc(BUFFER_SIZE); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
 		buffer = (uint8_t *)malloc(BUFFER_SIZE);
 
-#ifdef USE_8_OUTPUT
+	#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE,LED_PORT_0,COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 		LEDS.addLeds<LED_TYPE,LED_PORT_1,COLOR_ORDER>(leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 		LEDS.addLeds<LED_TYPE,LED_PORT_2,COLOR_ORDER>(leds, 2 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
@@ -669,21 +674,36 @@ void setup() {
 	#endif
 	Serial.println("LEDs driver start");
 
+	// testFileIO(SD, "/music.Z565", 40, 1);
+
 	dma_display.begin(R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN);
 	dma_display.setPanelBrightness(32);
 	dma_display.clearScreen();
 
-	xTaskCreateUniversal(
-		taskTwo,   /* Task function. */
-		"TaskTwo", /* String with name of task. */
-		8192*4,	   /* Stack size in bytes. */
-		NULL,	   /* Parameter passed as input of the task */
-		1,		   /* Priority of the task. */
-		NULL,		   /* Task handle. */
-		1
-	);
+	#ifdef USE_SD
+		// Initialize SD card
+		SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
+		if (!SD.begin(SD_CS, SPI))
+		{
+			Serial.println("Card Mount Failed");
+			return;
+		}
+	#else
+		#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
+			if (!SPIFFS.begin(true))
+			{
+				Serial.println("An Error has occurred while mounting SPIFFS");
+				ESP.restart();
+			}
+			Serial.println("mounting SPIFFS OK");
+			root = SPIFFS.open("/");
+		#endif
+	#endif
+	
+	root = filesyteme.open("/");
+	file = root.openNextFile();	
 
-#ifdef USE_WIFI_MANAGER
+	#ifdef USE_WIFI_MANAGER
 
 		wifiManager.setDebugOutput(false);
 		wifiManager.setTimeout(180);
@@ -713,21 +733,21 @@ void setup() {
 
 		#ifdef USE_RESET_BUTTON
 
-		if (!digitalRead(RESET_WIFI_PIN)) {
-			Serial.printf("Start config\n");
-			wifiManager.startConfigPortal("ESP32_LEDs");
-		}
-		else
-		#endif
-		{
-			bool rest = wifiManager.autoConnect("ESP32_LEDs");
-
-			if (rest) {
-				Serial.println("Wifi connected");
+			if (!digitalRead(RESET_WIFI_PIN)) {
+				Serial.printf("Start config\n");
+				wifiManager.startConfigPortal("ESP32_LEDs");
 			}
 			else
-			ESP.restart();
-		}
+		#endif
+			{
+				bool rest = wifiManager.autoConnect("ESP32_LEDs");
+
+				if (rest) {
+					Serial.println("Wifi connected");
+				}
+				else
+				ESP.restart();
+			}
 	#elif defined(USE_AP)
 		Serial.println("Setting AP (Access Point)");
 		WiFi.softAP(AP_SSID, AP_PASSWORD);
@@ -823,7 +843,15 @@ void setup() {
 		timer.setTimer(5000, timerCallback, 6000); // Interval to measure FPS  (millis, function called, times invoked for 1000ms around 1 hr and half)
 	#endif
 
-	// file = SPIFFS.open("/test.Z565", FILE_WRITE);
+	xTaskCreateUniversal(
+		taskTwo,   /* Task function. */
+		"TaskTwo", /* String with name of task. */
+		8192 * 2,  /* Stack size in bytes. */
+		NULL,	   /* Parameter passed as input of the task */
+		1,		   /* Priority of the task. */
+		NULL,	   /* Task handle. */
+		1
+	);
 }
 
 void loop(void) {
