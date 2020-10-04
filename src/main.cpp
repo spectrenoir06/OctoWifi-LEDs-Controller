@@ -21,7 +21,7 @@
 #define USE_ZLIB
 // #define USE_BROTLI
 
-#define USE_SD
+#define USE_SD_MMC
 
 #define PRINT_FPS
 // #define PRINT_DEBUG
@@ -116,9 +116,15 @@ const int LED_PORT_7 		= 17;
 		const int SD_SCK  = 14;
 		const int SD_MISO = 2;
 		#define filesyteme SD
-	#else
+	#endif
+	#ifdef USE_SD_MMC
+		#include "FS.h"
+		#include "SD_MMC.h"
+		#define filesyteme SD_MMC
+	#endif
+		#ifdef USE_SPIFFS
 		#include "SPIFFS.h"
-		#include filesyteme SPIFFS
+		#define filesyteme SPIFFS
 	#endif
 #endif
 
@@ -688,7 +694,15 @@ void setup() {
 			Serial.println("Card Mount Failed");
 			return;
 		}
-	#else
+	#endif
+	#ifdef USE_SD_MMC
+		pinMode(2, INPUT_PULLUP);
+		if (!SD_MMC.begin("/sdcard", true)) {
+			Serial.println("Card Mount Failed");
+			return;
+		}
+#endif
+	#ifdef USE_SPIFFS
 		#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 			if (!SPIFFS.begin(true))
 			{
