@@ -180,8 +180,10 @@ enum UDP_PACKET {
 	SET_MODE = 9,
 	REBOOT = 10,
 
-	LED_RLE_888 = 11,
-	LED_RLE_888_UPDATE = 12,
+	STOP = 11,
+
+	// LED_RLE_888 = 11,
+	// LED_RLE_888_UPDATE = 12,
 
 	LED_BRO_888 = 13,
 	LED_BRO_888_UPDATE = 14,
@@ -208,6 +210,8 @@ Artnet			artnet;
 uint8_t			led_state = 0;
 uint16_t		paquet_count = 0;
 uint8_t			anim_on = false;
+static TaskHandle_t animeTaskHandle = NULL;
+
 
 #ifdef USE_FTP
 FtpServer ftpSrv;
@@ -220,14 +224,14 @@ File root;
 
 #ifdef USE_ANIM
 	// size_t un_size = sizeof(buff);
-uint16_t wait;
-uint8_t head[5];
-uint16_t fps;
-uint16_t nb;
-unsigned long previousMillis = 0;
-uint8_t		anim = ANIM_START;
+	uint16_t wait;
+	uint8_t head[5];
+	uint16_t fps;
+	uint16_t nb;
+	unsigned long previousMillis = 0;
+	uint8_t		anim = ANIM_START;
 #else
-uint8_t		anim = ANIM_UDP;
+	uint8_t		anim = ANIM_UDP;
 #endif
 
 char	hostname[50] = DEFAULT_HOSTNAME;
@@ -346,27 +350,28 @@ void read_anim_frame() {
 
 	if (ret) {
 		Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), compress_size, un_size, r);
-	}
+	} else {
+		for (int i = 0; i < LED_TOTAL; i++) {
+			#if defined(USE_HUB75)
+				dma_display.drawPixel(i%MATRIX_WIDTH, i/MATRIX_WIDTH, ((uint16_t*)buff_test)[i]);
+			#else
+				// uint8_t r = ((((buff_test[i] >> 11) & 0x1F) * 527) + 23) >> 6;
+				// uint8_t g = ((((buff_test[i] >> 5) & 0x3F) * 259) + 33) >> 6;
+				// uint8_t b = (((buff_test[i] & 0x1F) * 527) + 23) >> 6;
+				// leds[i] = r << 16 | g << 8 | b;
+			#endif
+		}
 
-	for (int i = 0; i < LED_TOTAL; i++) {
 		#if defined(USE_HUB75)
-			dma_display.drawPixel(i%MATRIX_WIDTH, i/MATRIX_WIDTH, ((uint16_t*)buff_test)[i]);
+			dma_display.showDMABuffer();
+			dma_display.flipDMABuffer();
 		#else
-			// uint8_t r = ((((buff_test[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-			// uint8_t g = ((((buff_test[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-			// uint8_t b = (((buff_test[i] & 0x1F) * 527) + 23) >> 6;
-			// leds[i] = r << 16 | g << 8 | b;
+			LEDS.show();
 		#endif
+
+		frameCounter++;
 	}
 
-	#if defined(USE_HUB75)
-		dma_display.showDMABuffer();
-		dma_display.flipDMABuffer();
-	#else
-		LEDS.show();
-	#endif
-
-	frameCounter++;
 
 	if (!file.available()) {
 		// file.close();
@@ -431,15 +436,40 @@ void printFile(const char* filename) {
 #endif
 
 #ifdef USE_WIFI_MANAGER
-	//flag for saving data
-bool shouldSaveConfig = false;
+		//flag for saving data
+	bool shouldSaveConfig = false;
 
-//callback notifying us of the need to save config
-void saveConfigCallback() {
-	Serial.println("Should save config");
-	shouldSaveConfig = true;
-}
+	//callback notifying us of the need to save config
+	void saveConfigCallback() {
+		Serial.println("Should save config");
+		shouldSaveConfig = true;
+	}
 #endif
+
+void taskTwo(void* parameter) {
+	#ifdef USE_ANIM
+		for (;;) {
+			switch (anim) {
+				case ANIM_START:
+					load_anim();
+					break;
+				case ANIM_PLAY:
+					if (millis() - previousMillis >= wait) {
+						previousMillis = millis();
+						read_anim_frame();
+						// vTaskDelay(wait / portTICK_PERIOD_MS);
+					}
+					break;
+				case ANIM_UDP:
+					break;
+			}
+			vTaskDelay(1 / portTICK_PERIOD_MS);
+		}
+	#endif
+
+	Serial.println("Ending task 1");
+	vTaskDelete(NULL);
+}
 
 #ifdef USE_UDP
 
@@ -447,12 +477,12 @@ void onDmxFrame(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t* d
 
 	static uint8_t dmx_counter = 0;
 
-#ifdef PRINT_DMX
-	Serial.print("DMX: Univ: ");
-	Serial.print(universe, DEC);
-	Serial.print(", Seq: ");
-	Serial.println(sequence, DEC);
-#endif
+	#ifdef PRINT_DMX
+		Serial.print("DMX: Univ: ");
+		Serial.print(universe, DEC);
+		Serial.print(", Seq: ");
+		Serial.println(sequence, DEC);
+	#endif
 
 	if (sequence != dmx_counter + 1 && sequence) {
 		// Serial.println("LOST frame: ");
@@ -475,10 +505,10 @@ void onDmxFrame(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t* d
 }
 
 void onSync(IPAddress remoteIP) {
-#ifdef PRINT_DMX
-	Serial.println("DMX: Sync");
-#endif
-	LEDS.show();
+	#ifdef PRINT_DMX
+		Serial.println("DMX: Sync");
+	#endif
+		LEDS.show();
 }
 
 void udp_receive(AsyncUDP_bigPacket packet) {
@@ -497,6 +527,10 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 		size_t		un_size  = LED_TOTAL * 3;
 
 		anim = ANIM_UDP;
+		if (animeTaskHandle) {
+			vTaskDelete(animeTaskHandle);
+			animeTaskHandle = NULL;
+		}
 
 		if (type != 'A') {
 			paquet_count++;
@@ -596,18 +630,18 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 						Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
 						// memset(leds, 0, LED_TOTAL * 3);
 						// memset(buffer, 0, LED_TOTAL * 3);
+					} else {
+						#if defined(USE_HUB75)
+							for (int i = 0; i < LED_TOTAL; i++)
+								dma_display.drawPixelRGB888(i%MATRIX_WIDTH, i/MATRIX_WIDTH, leds[i].r, leds[i].g, leds[i].b);
+
+							dma_display.showDMABuffer();
+							dma_display.flipDMABuffer();
+						#else
+							LEDS.show();
+						#endif
+						frameCounter++;
 					}
-
-					#if defined(USE_HUB75)
-						for (int i = 0; i < LED_TOTAL; i++)
-							dma_display.drawPixelRGB888(i%MATRIX_WIDTH, i/MATRIX_WIDTH, leds[i].r, leds[i].g, leds[i].b);
-
-						dma_display.showDMABuffer();
-						dma_display.flipDMABuffer();
-					#else
-						LEDS.show();
-					#endif
-					frameCounter++;
 				}
 				break;
 			case LED_Z_565:
@@ -630,20 +664,38 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 							Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
 							// memset(leds, 0, LED_TOTAL * 3);
 							// memset(buffer, 0, LED_TOTAL * 3);
-						}
-						
-						for (int i = 0; i < LED_TOTAL; i++)
-							dma_display.drawPixelRGB565(i%128, i/128, ((uint16_t*)leds)[i]);
+						} else {
+							for (int i = 0; i < LED_TOTAL; i++)
+								dma_display.drawPixelRGB565(i%128, i/128, ((uint16_t*)leds)[i]);
 
-						dma_display.showDMABuffer();
-						dma_display.flipDMABuffer();
-						frameCounter++;
+							dma_display.showDMABuffer();
+							dma_display.flipDMABuffer();
+							frameCounter++;
+						}
 					}
 				#else
 					printf("Z565 is not supported with 24Bit LEDs\n");
 				#endif
 				break;
 		#endif
+
+		case STOP:
+			#ifdef USE_ANIM
+				if (anim_on) {
+					anim = ANIM_PLAY;
+					xTaskCreate(
+						taskTwo,   /* Task function. */
+						"TaskTwo", /* String with name of task. */
+						8192 * 4,  /* Stack size in bytes. */
+						NULL,	   /* Parameter passed as input of the task */
+						1,		   /* Priority of the task. */
+						&animeTaskHandle	   /* Task handle. */
+					);
+
+				}
+			#endif
+			Serial.printf("stop: %d\n", type);
+			break;
 
 
 		default:
@@ -653,32 +705,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 	}
 }
 
-#endif
-
-void taskTwo(void* parameter) {
-	#ifdef USE_ANIM
-		for (;;) {
-			switch (anim) {
-			case ANIM_START:
-				load_anim();
-				break;
-			case ANIM_PLAY:
-				// if (millis() - previousMillis >= wait) {
-					// previousMillis = millis();
-					read_anim_frame();
-					vTaskDelay(wait / portTICK_PERIOD_MS);
-				// }
-				break;
-			case ANIM_UDP:
-				break;
-			}
-			
-		}
-	#endif
-
-	Serial.println("Ending task 1");
-	vTaskDelete(NULL);
-}
+#endif // USE_UDP
 
 void setup() {
 	Serial.begin(115200);
@@ -918,14 +945,13 @@ void setup() {
 	#endif
 
 	#ifdef USE_ANIM
-		xTaskCreateUniversal(
+		xTaskCreate(
 			taskTwo,   /* Task function. */
 			"TaskTwo", /* String with name of task. */
 			8192 * 4,  /* Stack size in bytes. */
 			NULL,	   /* Parameter passed as input of the task */
 			1,		   /* Priority of the task. */
-			NULL,	   /* Task handle. */
-			1
+			&animeTaskHandle	   /* Task handle. */
 		);
 	#endif
 }
