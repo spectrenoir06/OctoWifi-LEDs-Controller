@@ -13,7 +13,7 @@
 #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
 // #define USE_OTA				// Activate Over the Air Update
 #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
-// #define USE_FTP				// Activate FTP server (need USE ANIM)
+#define USE_FTP				// Activate FTP server (need USE ANIM)
 // #define USE_CONFIG			// Activate config menu on WifiManger
 
 // #define USE_8_OUTPUT			// Activate 8 LEDs output
@@ -22,9 +22,11 @@
 
 #define USE_UDP
 #define USE_ZLIB
-#define USE_SPIFFS
-// #define USE_SD
+// #define USE_SPIFFS
+#define USE_SD
 // #define USE_SD_MMC
+
+#define MINIZ_USE_PSRAM
 
 #define PRINT_FPS
 // #define PRINT_DEBUG
@@ -49,7 +51,7 @@
 
 #define LED_TYPE			WS2812B
 #define COLOR_ORDER			GRB
-#define BRIGHTNESS			100
+#define BRIGHTNESS			30
 
 #ifdef USE_8_OUTPUT
 	#define NUM_STRIPS	8
@@ -99,12 +101,11 @@ const int LED_PORT_7 = 17;
 
 #define MATRIX_WIDTH 128
 
-// #define USE_GFX_ROOT 1
-#define PIXEL_COLOR_DEPTH_BITS 5
+// #define USE_GFX_ROOT 1dma
+// #define PIXEL_COLOR_DEPTH_BITS 5
 
 #if defined(USE_8_OUTPUT) || defined(USE_1_OUTPUT)
 	#define USE_FASTLED
-
 #endif
 
 #if defined(USE_HUB75)
@@ -258,7 +259,7 @@ uint8_t* buffer;
 #endif
 
 #if defined(USE_HUB75)
-	RGB64x32MatrixPanel_I2S_DMA dma_display(true);
+	MatrixPanel_I2S_DMA dma_display(true);
 #endif
 
 #ifdef PRINT_FPS
@@ -334,32 +335,43 @@ void load_anim() {
 void read_anim_frame() {
 	uint16_t compress_size;
 	unsigned long int un_size;
-	uint16_t buff_test[LED_TOTAL * 3];
+	uint16_t buff_test[LED_TOTAL*2];
 
 	file.read((uint8_t*)&compress_size, 2);
 	uint16_t r = file.read(buffer, compress_size);
 
 	// Serial.printf("%d, %x %x %x\n", r, buffer[0], buffer[1], buffer[2]);
 
-	int ret = uncompress(
+	int ret = mz_uncompress(
 		(uint8_t*)buff_test,
 		(long unsigned int*)&un_size,
 		(const uint8_t*)buffer,
 		r
 	);
+	// Serial.printf("heap: %d\n", ESP.getFreeHeap());
 
 	if (ret) {
 		Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), compress_size, un_size, r);
 	} else {
-		for (int i = 0; i < LED_TOTAL; i++) {
-			#if defined(USE_HUB75)
-				dma_display.drawPixel(i%MATRIX_WIDTH, i/MATRIX_WIDTH, ((uint16_t*)buff_test)[i]);
-			#else
-				// uint8_t r = ((((buff_test[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-				// uint8_t g = ((((buff_test[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-				// uint8_t b = (((buff_test[i] & 0x1F) * 527) + 23) >> 6;
-				// leds[i] = r << 16 | g << 8 | b;
-			#endif
+		if (head[0] == LED_Z_565) {
+			for (int i = 0; i < LED_TOTAL; i++) {
+				#if defined(USE_HUB75)
+					dma_display.drawPixelRGB565(i%MATRIX_WIDTH, i/MATRIX_WIDTH, ((uint16_t*)buff_test)[i]);
+				#else
+					uint8_t r = ((((buff_test[i] >> 11) & 0x1F) * 527) + 23) >> 6;
+					uint8_t g = ((((buff_test[i] >> 5) & 0x3F) * 259) + 33) >> 6;
+					uint8_t b = (((buff_test[i] & 0x1F) * 527) + 23) >> 6;
+					leds[i] = r << 16 | g << 8 | b;
+				#endif
+			}
+		} else if (head[0] == LED_Z_888) {
+			for (int i = 0; i < LED_TOTAL; i++) {
+				#if defined(USE_HUB75)
+					dma_display.drawPixelRGB888(i%MATRIX_WIDTH, i/MATRIX_WIDTH, buff_test[i*3], buff_test[i*3+1], buff_test[i*3+2]);
+				#else
+					leds[i] = ((CRGB*)buff_test)[i];
+				#endif
+			}
 		}
 
 		#if defined(USE_HUB75)
@@ -686,7 +698,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 					xTaskCreate(
 						taskTwo,   /* Task function. */
 						"TaskTwo", /* String with name of task. */
-						8192 * 4,  /* Stack size in bytes. */
+						8192 * 8,  /* Stack size in bytes. */
 						NULL,	   /* Parameter passed as input of the task */
 						1,		   /* Priority of the task. */
 						&animeTaskHandle	   /* Task handle. */
@@ -708,6 +720,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 #endif // USE_UDP
 
 void setup() {
+	psramInit();
 	Serial.begin(115200);
 	WiFi.mode(WIFI_STA);
 
@@ -759,7 +772,7 @@ void setup() {
 
 	#if defined(USE_HUB75)
 		dma_display.begin(R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN);
-		dma_display.setPanelBrightness(32);
+		dma_display.setPanelBrightness(85);
 		dma_display.clearScreen();
 	#endif
 
@@ -803,6 +816,18 @@ void setup() {
 			}
 		#endif
 	#endif
+
+	#ifdef USE_ANIM
+		xTaskCreate(
+			taskTwo,   /* Task function. */
+			"TaskTwo", /* String with name of task. */
+			8192 * 4,  /* Stack size in bytes. */
+			NULL,	   /* Parameter passed as input of the task */
+			1,		   /* Priority of the task. */
+			&animeTaskHandle	   /* Task handle. */
+		);
+	#endif
+
 
 	#ifdef USE_WIFI_MANAGER
 
@@ -942,17 +967,6 @@ void setup() {
 
 	#ifdef PRINT_FPS
 		timer.setTimer(5000, timerCallback, 6000); // Interval to measure FPS  (millis, function called, times invoked for 1000ms around 1 hr and half)
-	#endif
-
-	#ifdef USE_ANIM
-		xTaskCreate(
-			taskTwo,   /* Task function. */
-			"TaskTwo", /* String with name of task. */
-			8192 * 4,  /* Stack size in bytes. */
-			NULL,	   /* Parameter passed as input of the task */
-			1,		   /* Priority of the task. */
-			&animeTaskHandle	   /* Task handle. */
-		);
 	#endif
 }
 
