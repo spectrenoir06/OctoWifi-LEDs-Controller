@@ -6,30 +6,30 @@
 
 // #define USE_AP				// The driver start has a WiFi Acess point
 // #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
-#define USE_WIFI_MANAGER		// The driver use Wifi manager
+// #define USE_WIFI_MANAGER		// The driver use Wifi manager
 
 //#define USE_RESET_BUTTON		// Can reset Wifi manager with button
 
-#define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
+// #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
 // #define USE_OTA				// Activate Over the Air Update
-#define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
-#define USE_FTP				// Activate FTP server (need USE ANIM)
+// #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
+// #define USE_FTP				// Activate FTP server (need USE ANIM)
 // #define USE_CONFIG			// Activate config menu on WifiManger
 
 // #define USE_8_OUTPUT			// Activate 8 LEDs output
-#define USE_HUB75
+// #define USE_HUB75
 // #define USE_1_OUTPUT
 
-#define USE_UDP
-#define USE_ZLIB
+// #define USE_UDP
+// #define USE_ZLIB
 // #define USE_SPIFFS
-#define USE_SD
+// #define USE_SD
 // #define USE_SD_MMC
 
-#define MINIZ_USE_PSRAM
+// #define MINIZ_USE_PSRAM
 
-#define PRINT_FPS
-// #define PRINT_DEBUG
+// #define PRINT_FPS
+#define PRINT_DEBUG
 // #define buff
 
 #define FIRMWARE_VERSION	"1.0"
@@ -51,55 +51,55 @@
 
 #define LED_TYPE			WS2812B
 #define COLOR_ORDER			GRB
-#define BRIGHTNESS			30
+// #define BRIGHTNESS			10
 
-#ifdef USE_8_OUTPUT
-	#define NUM_STRIPS	8
-#else
-	#define NUM_STRIPS	1
-#endif
+// #ifdef USE_8_OUTPUT
+// 	#define NUM_STRIPS	8
+// #else
+// 	#define NUM_STRIPS	1
+// #endif
 
 
 const int START_UNI = 0;
 const int UNI_BY_STRIP = 4;
 const int LEDS_BY_UNI = 170;
-const int LED_BY_STRIP = 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
-const int LED_TOTAL = 4096;//(LED_BY_STRIP*NUM_STRIPS);
+// const int LED_BY_STRIP = 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
+const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
 // const int BUFFER_SIZE(LED_TOTAL * 3);
 
 #define LED_VCC				5	// 5V
-#define LED_MAX_CURRENT		1000  // 2000mA
+// #define LED_MAX_CURRENT		1000  // 2000mA
 
-const int RESET_WIFI_PIN = 17;//23;
+// const int RESET_WIFI_PIN = 17;//23;
 
-const int LED_PORT_0 = 13;
-const int LED_PORT_1 = 18;
-const int LED_PORT_2 = 2;
-const int LED_PORT_3 = 22;
-const int LED_PORT_4 = 19;
-const int LED_PORT_5 = 18;
-const int LED_PORT_6 = 21;
-const int LED_PORT_7 = 17;
+// const int LED_PORT_0 = 13;
+// const int LED_PORT_1 = 18;
+// const int LED_PORT_2 = 2;
+// const int LED_PORT_3 = 22;
+// const int LED_PORT_4 = 19;
+// const int LED_PORT_5 = 18;
+// const int LED_PORT_6 = 21;
+// const int LED_PORT_7 = 17;
 
-#define R1_PIN 25
-#define G1_PIN 26
-#define B1_PIN 27
+// #define R1_PIN 25
+// #define G1_PIN 26
+// #define B1_PIN 27
 
-#define R2_PIN 18
-#define G2_PIN 12
-#define B2_PIN 21
+// #define R2_PIN 18
+// #define G2_PIN 12
+// #define B2_PIN 21
 
-#define A_PIN 23
-#define B_PIN 19
-#define C_PIN 5
-#define D_PIN 33
-#define CLK_PIN 32
-#define LAT_PIN 4
-#define OE_PIN 22
+// #define A_PIN 23
+// #define B_PIN 19
+// #define C_PIN 5
+// #define D_PIN 33
+// #define CLK_PIN 32
+// #define LAT_PIN 4
+// #define OE_PIN 22
 
-#define E_PIN -1
+// #define E_PIN -1
 
-#define MATRIX_WIDTH 128
+// #define MATRIX_WIDTH 128
 
 // #define USE_GFX_ROOT 1dma
 // #define PIXEL_COLOR_DEPTH_BITS 5
@@ -677,8 +677,9 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 							// memset(leds, 0, LED_TOTAL * 3);
 							// memset(buffer, 0, LED_TOTAL * 3);
 						} else {
-							for (int i = 0; i < LED_TOTAL; i++)
+							for (int i = 0; i < LED_TOTAL; i++) {
 								dma_display.drawPixelRGB565(i%128, i/128, ((uint16_t*)leds)[i]);
+							}
 
 							dma_display.showDMABuffer();
 							dma_display.flipDMABuffer();
@@ -760,6 +761,12 @@ void setup() {
 	#ifdef USE_1_OUTPUT
 		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
+
+	#ifdef USE_2_OUTPUT
+		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>(leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
+	#endif
+
 	LEDS.setBrightness(BRIGHTNESS);
 	
 	#ifdef USE_POWER_LIMITER
