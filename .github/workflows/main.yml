@@ -35,25 +35,14 @@ jobs:
       env:
         SUPER_SECRET: ${{ secrets.TOKEN }} 
       run: |
-        mv .pio/build/odroid_esp32/firmware.bin firmware_odroid_esp32.bin
-        mv .pio/build/hat/firmware.bin firmware_hat.bin
-        mv .pio/build/hat_PSRAM/firmware.bin firmware_hat_PSRAM.bin
-        mv .pio/build/Belge/firmware.bin firmware_Belge.bin
-        mv .pio/build/Brian_Lough_64x32/firmware.bin firmware_Brian_Lough_64x32.bin
-        mv .pio/build/Brian_Lough_64x64/firmware.bin firmware_Brian_Lough_64x64.bin
-        mv .pio/build/m5stack/firmware.bin firmware_m5stack.bin
-        mv .pio/build/Belge_2_32x32/firmware.bin firmware_Belge_2_32x32.bin
+        mv .pio/build/Hat_V2/firmware.bin    firmware_Hat_V2.bin
+        mv .pio/build/Hat_V2_AP/firmware.bin firmware_Hat_V2_AP.bin
 
-        curl -sSF file=@firmware_odroid_esp32.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_hat.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_hat_PSRAM.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_Belge.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_Brian_Lough_64x32.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_Brian_Lough_64x64.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_m5stack.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@firmware_Belge_2_32x32.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
 
-        echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > emote_matrix.info
-        curl -sSF file=@emote_matrix.info 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@firmware_Hat_V2.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@firmware_Hat_V2_AP.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        
+        echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > octoWifi.info
+        curl -sSF file=@octoWifi.info 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
 
 
