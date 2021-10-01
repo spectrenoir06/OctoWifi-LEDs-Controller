@@ -2,7 +2,7 @@
 
 // #define FASTLED_ESP32_I2S
 // #define FASTLED_ALLOW_INTERRUPTS
-#include <FastLED.h>
+// #include <FastLED.h>
 
 // #define USE_AP				// The driver start has a WiFi Acess point
 // #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
@@ -29,7 +29,7 @@
 // #define MINIZ_USE_PSRAM
 
 // #define PRINT_FPS
-#define PRINT_DEBUG
+// #define PRINT_DEBUG
 // #define buff
 
 #define FIRMWARE_VERSION	"1.0"
@@ -59,12 +59,11 @@
 // 	#define NUM_STRIPS	1
 // #endif
 
-
 const int START_UNI = 0;
 const int UNI_BY_STRIP = 4;
 const int LEDS_BY_UNI = 170;
 // const int LED_BY_STRIP = 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
-const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
+// const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
 // const int BUFFER_SIZE(LED_TOTAL * 3);
 
 #define LED_VCC				5	// 5V
@@ -72,49 +71,33 @@ const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
 
 // const int RESET_WIFI_PIN = 17;//23;
 
-// const int LED_PORT_0 = 13;
-// const int LED_PORT_1 = 18;
-// const int LED_PORT_2 = 2;
-// const int LED_PORT_3 = 22;
-// const int LED_PORT_4 = 19;
-// const int LED_PORT_5 = 18;
-// const int LED_PORT_6 = 21;
-// const int LED_PORT_7 = 17;
-
-// #define R1_PIN 25
-// #define G1_PIN 26
-// #define B1_PIN 27
-
-// #define R2_PIN 18
-// #define G2_PIN 12
-// #define B2_PIN 21
-
-// #define A_PIN 23
-// #define B_PIN 19
-// #define C_PIN 5
-// #define D_PIN 33
-// #define CLK_PIN 32
-// #define LAT_PIN 4
-// #define OE_PIN 22
-
-// #define E_PIN -1
-
-// #define MATRIX_WIDTH 128
-
-// #define USE_GFX_ROOT 1dma
-// #define PIXEL_COLOR_DEPTH_BITS 5
-
 #if defined(USE_8_OUTPUT) || defined(USE_1_OUTPUT)
 	#define USE_FASTLED
 #endif
 
 #if defined(USE_HUB75)
 	#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+	MatrixPanel_I2S_DMA *display = nullptr;
 #endif
 
+#if defined(USE_BAR)
+	// #include "I2SClocklessLedDriver.h"
+	#include "I2SClocklessVirtualLedDriver.h"
+	int pins[3] = {
+		LED_PORT_0,
+		LED_PORT_1,
+		LED_PORT_2
+	};
+	I2SClocklessVirtualLedDriver driver;
+#endif
 
 #ifdef USE_WIFI_MANAGER
 	#include <WiFiManager.h>
+#endif
+
+
+#ifdef USE_FTP
+	#include "ESP32FtpServer.h"
 #endif
 
 #if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
@@ -141,10 +124,6 @@ const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
 
 #ifdef USE_CONFIG
 	#include <ArduinoJson.h>
-#endif
-
-#ifdef USE_FTP
-	#include <ESP8266FtpServer.h>
 #endif
 
 #ifdef USE_OTA
@@ -204,8 +183,8 @@ enum ANIM {
 };
 
 #ifdef USE_UDP
-AsyncUDP_big	udp;
-Artnet			artnet;
+	AsyncUDP_big	udp;
+	Artnet			artnet;
 #endif
 
 uint8_t			led_state = 0;
@@ -215,12 +194,12 @@ static TaskHandle_t animeTaskHandle = NULL;
 
 
 #ifdef USE_FTP
-FtpServer ftpSrv;
+	FtpServer ftpSrv;
 #endif
 
 #if defined(USE_CONFIG) || defined(USE_ANIM)
-File file;
-File root;
+	File file;
+	File root;
 #endif
 
 #ifdef USE_ANIM
@@ -245,7 +224,7 @@ struct Config {
 const char* filename = "/config.txt";
 Config config;
 
-CRGB* leds;
+uint8_t* leds;
 uint8_t* buffer;
 
 #ifdef USE_WIFI_MANAGER
@@ -256,10 +235,6 @@ uint8_t* buffer;
 
 	// WiFiManagerParameter custom_text("<select name=\"LEDs type\" id=\"leds_type\"><option value=\"WS2811 800kHz\">WS2811 800kHz</option><option value=\"WS2811 400kHz\">WS2811 400kHz</option><option value=\"WS2812\">WS2812</option><option value=\"WS2813\">WS2813</option><option value=\"SK6822\">SK6822</option></select>");
 	#endif
-#endif
-
-#if defined(USE_HUB75)
-	MatrixPanel_I2S_DMA dma_display(true);
 #endif
 
 #ifdef PRINT_FPS
@@ -307,6 +282,12 @@ void load_anim() {
 
 }
 
+#ifdef USE_HUB75
+	void flip_matrix() {
+		display->flipDMABuffer();
+	}
+#endif
+
 // void save_anim()
 // {
 // 	file = SPIFFS.open("/test.Z565", FILE_WRITE);
@@ -335,7 +316,7 @@ void load_anim() {
 void read_anim_frame() {
 	uint16_t compress_size;
 	unsigned long int un_size;
-	uint16_t buff_test[LED_TOTAL*2];
+	uint8_t buff_test[LED_TOTAL*3];
 
 	file.read((uint8_t*)&compress_size, 2);
 	uint16_t r = file.read(buffer, compress_size);
@@ -354,31 +335,38 @@ void read_anim_frame() {
 		Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), compress_size, un_size, r);
 	} else {
 		if (head[0] == LED_Z_565) {
+			uint16_t* ptr = (uint16_t*)buff_test;
 			for (int i = 0; i < LED_TOTAL; i++) {
 				#if defined(USE_HUB75)
-					dma_display.drawPixelRGB565(i%MATRIX_WIDTH, i/MATRIX_WIDTH, ((uint16_t*)buff_test)[i]);
+					display->drawPixel(i%MATRIX_W, i/MATRIX_W, ((uint16_t*)buff_test)[i]);
 				#else
-					uint8_t r = ((((buff_test[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-					uint8_t g = ((((buff_test[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-					uint8_t b = (((buff_test[i] & 0x1F) * 527) + 23) >> 6;
-					leds[i] = r << 16 | g << 8 | b;
+					uint8_t r = ((((ptr[i] >> 11) & 0x1F) * 527) + 23) >> 6;
+					uint8_t g = ((((ptr[i] >> 5) & 0x3F) * 259) + 33) >> 6;
+					uint8_t b = ((( ptr[i] & 0x1F) * 527) + 23) >> 6;
+					driver.setPixel(i, r, g, b, 0);
 				#endif
 			}
 		} else if (head[0] == LED_Z_888) {
 			for (int i = 0; i < LED_TOTAL; i++) {
 				#if defined(USE_HUB75)
-					dma_display.drawPixelRGB888(i%MATRIX_WIDTH, i/MATRIX_WIDTH, buff_test[i*3], buff_test[i*3+1], buff_test[i*3+2]);
+					display->drawPixelRGB888(i%MATRIX_W, i/MATRIX_W, buff_test[i*3], buff_test[i*3+1], buff_test[i*3+2]);
 				#else
-					leds[i] = ((CRGB*)buff_test)[i];
+					leds[i * 3 + 0] = buff_test[i * 3 + 0];
+					leds[i * 3 + 1] = buff_test[i * 3 + 1];
+					leds[i * 3 + 2] = buff_test[i * 3 + 2];
+					leds[i * 3 + 3] = 0;
 				#endif
 			}
 		}
 
 		#if defined(USE_HUB75)
-			dma_display.showDMABuffer();
-			dma_display.flipDMABuffer();
+			flip_matrix();
 		#else
-			LEDS.show();
+			// LEDS.show();
+			for (int j = 1; j < 24; j++) {
+				memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
+			}
+			driver.showPixels();
 		#endif
 
 		frameCounter++;
@@ -520,7 +508,7 @@ void onSync(IPAddress remoteIP) {
 	#ifdef PRINT_DMX
 		Serial.println("DMX: Sync");
 	#endif
-		LEDS.show();
+		// LEDS.show();
 }
 
 void udp_receive(AsyncUDP_bigPacket packet) {
@@ -565,7 +553,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			if (len - 6 == size) {
 				#if defined(USE_HUB75)
 					for (uint16_t i = 0; i < (size/3); i++)
-						dma_display.drawPixelRGB888((i + leds_off) % MATRIX_WIDTH, (i + leds_off) / MATRIX_WIDTH, data[i*3], data[i*3+1], data[i*3+2]);
+						display->drawPixelRGB888((i + leds_off) % MATRIX_W, (i + leds_off) / MATRIX_W, data[i*3], data[i*3+1], data[i*3+2]);
 				#else
 					memcpy(((uint8_t*)leds) + leds_off * 3, data, size);
 				#endif
@@ -575,10 +563,9 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 
 			if (type == LED_RGB_888_UPDATE) {
 				#if defined(USE_HUB75)
-					dma_display.showDMABuffer();
-					dma_display.flipDMABuffer();
+					flip_matrix();
 				#else
-					LEDS.show();
+					// LEDS.show();
 				#endif
 				frameCounter++;
 			}
@@ -588,12 +575,13 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			if (len - 6 == size) {
 				for (uint16_t i = 0; i < (size/2); i++) {
 					#if defined(USE_HUB75)
-						dma_display.drawPixelRGB565((i + leds_off) % MATRIX_WIDTH, (i + leds_off) / MATRIX_WIDTH, data16[i]);
+						display->drawPixel((i + leds_off) % MATRIX_W, (i + leds_off) / MATRIX_W, data16[i]);
 					#else
 						uint8_t r = ((((data16[i] >> 11) & 0x1F) * 527) + 23) >> 6;
 						uint8_t g = ((((data16[i] >> 5) & 0x3F) * 259) + 33) >> 6;
 						uint8_t b = (((data16[i] & 0x1F) * 527) + 23) >> 6;
-						leds[i] = r << 16 | g << 8 | b;
+						// leds[i] = r << 16 | g << 8 | b;
+						driver.setPixel(i, r, g, b, 0);
 					#endif
 				}
 			}
@@ -602,20 +590,22 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 
 			if (type == LED_RGB_565_UPDATE) {
 				#if defined(USE_HUB75)
-					dma_display.showDMABuffer();
-					dma_display.flipDMABuffer();
+					flip_matrix();
 				#else
-					LEDS.show();
+					for (int j = 1; j < 24; j++) {
+						memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
+					}
+					driver.showPixels();
+						// LEDS.show();
 				#endif
 				frameCounter++;
 			}
 			break;
 		case LED_UPDATE:
 			#if defined(USE_HUB75)
-				dma_display.showDMABuffer();
-				dma_display.flipDMABuffer();
+				flip_matrix();
 			#else
-				LEDS.show();
+				// LEDS.show();
 			#endif
 			frameCounter++;
 			break;
@@ -639,18 +629,18 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 					);
 
 					if (ret) {
-						Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
+						// Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
+						Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
+
 						// memset(leds, 0, LED_TOTAL * 3);
 						// memset(buffer, 0, LED_TOTAL * 3);
 					} else {
 						#if defined(USE_HUB75)
 							for (int i = 0; i < LED_TOTAL; i++)
-								dma_display.drawPixelRGB888(i%MATRIX_WIDTH, i/MATRIX_WIDTH, leds[i].r, leds[i].g, leds[i].b);
-
-							dma_display.showDMABuffer();
-							dma_display.flipDMABuffer();
+								display->drawPixelRGB888(i % MATRIX_W, i / MATRIX_W, leds[i * 3 + 0], leds[i * 3 + 1], leds[i * 3 + 2]);
+							flip_matrix();
 						#else
-							LEDS.show();
+							// LEDS.show();
 						#endif
 						frameCounter++;
 					}
@@ -673,16 +663,15 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 						);
 
 						if (ret) {
-							Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
+							// Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
+							Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
 							// memset(leds, 0, LED_TOTAL * 3);
 							// memset(buffer, 0, LED_TOTAL * 3);
 						} else {
 							for (int i = 0; i < LED_TOTAL; i++) {
-								dma_display.drawPixelRGB565(i%128, i/128, ((uint16_t*)leds)[i]);
+								display->drawPixel(i%128, i/128, ((uint16_t*)leds)[i]);
 							}
-
-							dma_display.showDMABuffer();
-							dma_display.flipDMABuffer();
+							flip_matrix();
 							frameCounter++;
 						}
 					}
@@ -699,7 +688,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 					xTaskCreate(
 						taskTwo,   /* Task function. */
 						"TaskTwo", /* String with name of task. */
-						8192 * 8,  /* Stack size in bytes. */
+						8192 * 4,  /* Stack size in bytes. */
 						NULL,	   /* Parameter passed as input of the task */
 						1,		   /* Priority of the task. */
 						&animeTaskHandle	   /* Task handle. */
@@ -744,8 +733,8 @@ void setup() {
 		saveConfiguration(filename, config);
 	#endif
 
-	leds = (CRGB*)malloc(LED_TOTAL*3); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
-	buffer = (uint8_t*)malloc(LED_TOTAL*3);
+	leds = (uint8_t*)malloc(LED_TOTAL*3); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
+	buffer = (uint8_t*)malloc(LED_TOTAL * 3);
 
 	#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
@@ -767,20 +756,45 @@ void setup() {
 		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>(leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
-	LEDS.setBrightness(BRIGHTNESS);
+	// LEDS.setBrightness(BRIGHTNESS);
 	
 	#ifdef USE_POWER_LIMITER
 		LEDS.setMaxPowerInVoltsAndMilliamps(LED_VCC, LED_MAX_CURRENT);
 	#endif
 
 	Serial.println("LEDs driver start");
+	
+	#ifdef USE_BAR
+		driver.initled((uint8_t*)leds,pins, CLOCK_PIN, LATCH_PIN);
+		// driver.initled((uint8_t*)leds, pins, NUM_STRIPS, LED_BY_STRIP, ORDER_GRBW);
+		driver.setBrightness(10);
+	#endif
 
 	// testFileIO(SD, "/music.Z565", 40, 1);
 
 	#if defined(USE_HUB75)
-		dma_display.begin(R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN);
-		dma_display.setPanelBrightness(85);
-		dma_display.clearScreen();
+		HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
+		
+		HUB75_I2S_CFG mxconfig(
+			MATRIX_W,     // Module width
+			MATRIX_H,     // Module height
+			MATRIX_CHAIN, // chain length
+			_pins         // pin mapping
+		);
+
+		mxconfig.double_buff = false;                   // use DMA double buffer (twice as much RAM required)
+		// #ifndef DMA_DOUBLE_BUFF
+		// #endif
+		mxconfig.driver          = HUB75_I2S_CFG::SHIFTREG; // Matrix driver chip type - default is a plain shift register
+		mxconfig.i2sspeed        = HUB75_I2S_CFG::HZ_10M;   // I2S clock speed
+		mxconfig.clkphase        = true;                    // I2S clock phase
+		mxconfig.latch_blanking  = MATRIX_LATCH_BLANK;      // How many clock cycles to blank OE before/after LAT signal change, default is 1 clock
+
+		display = new MatrixPanel_I2S_DMA(mxconfig);
+
+		display->begin();  // setup display with pins as pre-defined in the library
+		display->setBrightness8(MATRIX_BRIGHNESS); //0-255
+		// flip_matrix();
 	#endif
 
 	#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
@@ -795,6 +809,10 @@ void setup() {
 				root = filesyteme.open("/");
 				file = root.openNextFile();
 				anim_on = true;
+				#ifdef USE_FTP
+					ftpSrv.begin(FTP_USER, FTP_PASS);
+					Serial.println("FTP Server Start");
+				#endif
 			}
 		#endif
 
@@ -807,6 +825,10 @@ void setup() {
 				root = filesyteme.open("/");
 				file = root.openNextFile();
 				anim_on = true;
+				#ifdef USE_FTP
+					ftpSrv.begin(FTP_USER, FTP_PASS);
+					Serial.println("FTP Server Start");
+				#endif
 			}
 		#endif
 
@@ -820,6 +842,10 @@ void setup() {
 				root = filesyteme.open("/");
 				file = root.openNextFile();
 				anim_on = true;
+				#ifdef USE_FTP
+					ftpSrv.begin(FTP_USER, FTP_PASS);
+					Serial.println("FTP Server Start");
+				#endif
 			}
 		#endif
 	#endif
@@ -965,11 +991,6 @@ void setup() {
 
 		ArduinoOTA.begin();
 		Serial.printf("OTA server started on port %d\n", OTA_PORT);
-	#endif
-
-	#ifdef USE_FTP
-		ftpSrv.begin(FTP_USER, FTP_PASS);
-		Serial.println("FTP Server Start");
 	#endif
 
 	#ifdef PRINT_FPS
