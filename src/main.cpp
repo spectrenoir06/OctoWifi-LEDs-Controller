@@ -4,7 +4,7 @@
 // #define FASTLED_ALLOW_INTERRUPTS
 // #include <FastLED.h>
 
-// #define USE_AP				// The driver start has a WiFi Acess point
+// #define USE_AP				// The driver start has a WiFi Access point
 // #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
 // #define USE_WIFI_MANAGER		// The driver use Wifi manager
 
@@ -28,9 +28,7 @@
 
 // #define MINIZ_USE_PSRAM
 
-// #define PRINT_FPS
 // #define PRINT_DEBUG
-// #define buff
 
 #define FIRMWARE_VERSION	"1.0"
 
@@ -95,11 +93,6 @@ const int LEDS_BY_UNI = 170;
 	#include <WiFiManager.h>
 #endif
 
-
-#ifdef USE_FTP
-	#include "ESP32FtpServer.h"
-#endif
-
 #if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 	#ifdef USE_SD
 		#include "FS.h"
@@ -110,6 +103,9 @@ const int LEDS_BY_UNI = 170;
 		const int SD_SCK = 14;
 		const int SD_MISO = 2;
 		#define filesyteme SD
+		#ifdef USE_FTP
+			#include "ESP32FtpServer.h"
+		#endif
 	#endif
 	#ifdef USE_SD_MMC
 		#include "FS.h"
@@ -119,6 +115,9 @@ const int LEDS_BY_UNI = 170;
 	#ifdef USE_SPIFFS
 		#include "SPIFFS.h"
 		#define filesyteme SPIFFS
+		#ifdef USE_FTP
+			#include "ESP8266FtpServer.h"
+		#endif
 	#endif
 #endif
 
@@ -316,8 +315,12 @@ void load_anim() {
 void read_anim_frame() {
 	uint16_t compress_size;
 	unsigned long int un_size;
-	uint8_t buff_test[LED_TOTAL*3];
-
+	#ifdef USE_BAR
+		uint8_t buff_test[256*4];
+	#else
+		uint8_t buff_test[LED_TOTAL*LED_SIZE];
+	#endif
+	
 	file.read((uint8_t*)&compress_size, 2);
 	uint16_t r = file.read(buffer, compress_size);
 
@@ -496,7 +499,7 @@ void onDmxFrame(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t* d
 
 	dmx_counter = sequence;
 
-	if (length < 3 || universe < START_UNI || universe >(START_UNI + UNI_BY_STRIP * NUM_STRIPS))
+	if (length < 3 || universe < START_UNI) // || universe >(START_UNI + UNI_BY_STRIP * NUM_STRIPS)
 		return;
 
 	uint16_t off = (universe - START_UNI) * LEDS_BY_UNI * 3;
@@ -591,12 +594,13 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			if (type == LED_RGB_565_UPDATE) {
 				#if defined(USE_HUB75)
 					flip_matrix();
-				#else
+				#elif defined(USE_BAR)
 					for (int j = 1; j < 24; j++) {
 						memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
 					}
 					driver.showPixels();
-						// LEDS.show();
+				#elif defined(USE_FASTLED)
+					LEDS.show();
 				#endif
 				frameCounter++;
 			}
@@ -604,8 +608,8 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 		case LED_UPDATE:
 			#if defined(USE_HUB75)
 				flip_matrix();
-			#else
-				// LEDS.show();
+			#elif defined(USE_FASTLED)
+					LEDS.show();
 			#endif
 			frameCounter++;
 			break;
@@ -629,7 +633,6 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 					);
 
 					if (ret) {
-						// Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
 						Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
 
 						// memset(leds, 0, LED_TOTAL * 3);
@@ -733,8 +736,8 @@ void setup() {
 		saveConfiguration(filename, config);
 	#endif
 
-	leds = (uint8_t*)malloc(LED_TOTAL*3); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
-	buffer = (uint8_t*)malloc(LED_TOTAL * 3);
+	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
+	buffer = (uint8_t*)malloc(LED_TOTAL * LED_SIZE);
 
 	#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>(leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
