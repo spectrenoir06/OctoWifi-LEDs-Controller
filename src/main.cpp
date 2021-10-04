@@ -49,10 +49,6 @@
 #define UDP_PORT			ART_NET_PORT
 #define OTA_PORT			3232
 
-#define LED_TYPE			WS2812B
-#define COLOR_ORDER			GRB
-// #define BRIGHTNESS			10
-
 // #ifdef USE_8_OUTPUT
 // 	#define NUM_STRIPS	8
 // #else
@@ -869,7 +865,9 @@ void setup() {
 		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
-	// LEDS.setBrightness(BRIGHTNESS);
+	#ifdef USE_FASTLED
+		LEDS.setBrightness(BRIGHTNESS);
+	#endif
 	
 	#ifdef USE_POWER_LIMITER
 		LEDS.setMaxPowerInVoltsAndMilliamps(LED_VCC, LED_MAX_CURRENT);

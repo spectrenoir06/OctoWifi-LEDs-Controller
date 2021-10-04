@@ -27,6 +27,8 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install --upgrade platformio
+    - name: Build Hat_V1
+      run: pio run -e Hat_V1
     - name: Build Hat_V2
       run: pio run -e Hat_V2
     - name: Build Hat_V2_AP
@@ -37,11 +39,12 @@ jobs:
       env:
         SUPER_SECRET: ${{ secrets.TOKEN }} 
       run: |
+        mv .pio/build/Hat_V1/firmware.bin    octoWifi_Hat_V2.bin
         mv .pio/build/Hat_V2/firmware.bin    octoWifi_Hat_V2.bin
         mv .pio/build/Hat_V2_AP/firmware.bin octoWifi_Hat_V2_AP.bin
         mv .pio/build/Hat_V2_BLE/firmware.bin octoWifi_Hat_V2_BLE.bin
 
-
+        curl -sSF file=@octoWifi_Hat_V1.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         curl -sSF file=@octoWifi_Hat_V2.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         curl -sSF file=@octoWifi_Hat_V2_AP.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         curl -sSF file=@octoWifi_Hat_V2_BLE.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
