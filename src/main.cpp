@@ -48,19 +48,9 @@
 #define ART_NET_PORT		6454
 #define UDP_PORT			ART_NET_PORT
 #define OTA_PORT			3232
-
-// #ifdef USE_8_OUTPUT
-// 	#define NUM_STRIPS	8
-// #else
-// 	#define NUM_STRIPS	1
-// #endif
-
 const int START_UNI = 0;
 const int UNI_BY_STRIP = 4;
 const int LEDS_BY_UNI = 170;
-// const int LED_BY_STRIP = 512;	//(UNI_BY_STRIP*LEDS_BY_UNI)
-// const int LED_TOTAL = (LED_BY_STRIP*NUM_STRIPS);
-// const int BUFFER_SIZE(LED_TOTAL * 3);
 
 #define LED_VCC				5	// 5V
 // #define LED_MAX_CURRENT		1000  // 2000mA
@@ -170,6 +160,7 @@ enum UDP_PACKET {
 
 	LED_Z_565 = 17,
 	LED_Z_565_UPDATE = 18,
+	LED_Z_8888 = 19,
 
 };
 
@@ -383,73 +374,108 @@ void load_anim() {
 	}
 
 }
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define BUF_SIZE 1024
 
 void read_anim_frame() {
 	uint16_t compress_size;
-	unsigned long int un_size;
-	#ifdef USE_BAR
-		uint8_t buff_test[256*4];
-	#else
-		uint8_t buff_test[LED_TOTAL*LED_SIZE];
-	#endif
+	unsigned long int un_size = 0;
+
+	static uint8_t s_inbuf[BUF_SIZE];
+	static uint8_t s_outbuf[BUF_SIZE];
+
+	mz_stream stream;
+	memset(&stream, 0, sizeof(stream));
+	stream.next_in = s_inbuf;
+	stream.avail_in = 0;
+	stream.next_out = s_outbuf;
+	stream.avail_out = BUF_SIZE;
+
 	
 	file.read((uint8_t*)&compress_size, 2);
-	uint16_t r = file.read(buffer, compress_size);
+	uint16_t infile_remaining = compress_size;
 
-	// Serial.printf("%d, %x %x %x\n", r, buffer[0], buffer[1], buffer[2]);
+	if (mz_inflateInit(&stream)) {
+		Serial.printf("inflateInit() failed!\n");
+		return;
+	}
 
-	int ret = mz_uncompress(
-		(uint8_t*)buff_test,
-		(long unsigned int*)&un_size,
-		(const uint8_t*)buffer,
-		r
-	);
-	// Serial.printf("heap: %d\n", ESP.getFreeHeap());
+	for (;;){
+		int status;
+		if (!stream.avail_in){
+			uint n = MIN(BUF_SIZE, infile_remaining);
 
-	if (ret) {
-		Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), compress_size, un_size, r);
-	} else {
-		if (head[0] == LED_Z_565) {
-			uint16_t* ptr = (uint16_t*)buff_test;
-			for (int i = 0; i < (un_size / 2); i++) {
-				#if defined(USE_HUB75)
-					display->drawPixel(i%MATRIX_W, i/MATRIX_W, ptr[i]);
-				#else
-					uint8_t r = ((((ptr[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-					uint8_t g = ((((ptr[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-					uint8_t b = ((( ptr[i] & 0x1F) * 527) + 23) >> 6;
-					#if defined(USE_BAR)
-						driver.setPixel(i, r, g, b, 0);
-					#elif defined(USE_FASTLED)
-						leds[i] = r << 16 | g << 8 | b;
-					#endif
-				#endif
+			if (file.read(s_inbuf, n) != n){
+				printf("Failed reading from input file!\n");
+				return;
 			}
-		} else if (head[0] == LED_Z_888) {
-			for (int i = 0; i < LED_TOTAL; i++) {
-				#if defined(USE_HUB75)
-					display->drawPixelRGB888(i%MATRIX_W, i/MATRIX_W, buff_test[i*3], buff_test[i*3+1], buff_test[i*3+2]);
-				#else
-					leds[i * 3 + 0] = buff_test[i * 3 + 0];
-					leds[i * 3 + 1] = buff_test[i * 3 + 1];
-					leds[i * 3 + 2] = buff_test[i * 3 + 2];
-					leds[i * 3 + 3] = 0;
+
+			stream.next_in = s_inbuf;
+			stream.avail_in = n;
+			infile_remaining -= n;
+		}
+
+		status = mz_inflate(&stream, MZ_SYNC_FLUSH);
+
+		if ((status == MZ_STREAM_END) || (!stream.avail_out)){
+			uint n = BUF_SIZE - stream.avail_out;
+			#ifdef USE_HUB75
+				memcpy(leds + un_size, s_outbuf, n);
+			#else
+				if (head[0] == LED_Z_565)
+					memcpy(buffer + un_size, s_outbuf, n);
+				else
+					memcpy(leds + un_size, s_outbuf, n);
+			#endif
+			un_size+=n;
+			stream.next_out = s_outbuf;
+			stream.avail_out = BUF_SIZE;
+		}
+
+		if (status == MZ_STREAM_END)
+			break;
+		else if (status != MZ_OK){
+			printf("inflate() failed with status %i!\n", status);
+			return;
+		}
+	}
+
+	if (mz_inflateEnd(&stream) != MZ_OK){
+		printf("inflateEnd() failed!\n");
+		return;
+	}
+
+	#if defined(USE_HUB75)
+		if (head[0] == LED_Z_888)
+			for (int i = 0; i < LED_TOTAL; i++)
+				display->drawPixelRGB888(i % MATRIX_W, i / MATRIX_W, leds[i * 3], leds[i * 3 + 1], leds[i * 3 + 2]);
+		else if (head[0] == LED_Z_565)
+			for (int i = 0; i < LED_TOTAL; i++)
+				display->drawPixel(i % MATRIX_W, i / MATRIX_W, ((uint16_t*)leds)[i]);
+	#else
+		if (head[0] == LED_Z_565) {
+			for (int i = 0; i < LED_TOTAL; i++){
+				uint8_t r = ((((((uint16_t*)buffer)[i] >> 11) & 0x1F) * 527) + 23) >> 6;
+				uint8_t g = ((((((uint16_t*)buffer)[i] >> 5) & 0x3F) * 259) + 33) >> 6;
+				uint8_t b = (((((uint16_t*)buffer)[i] & 0x1F) * 527) + 23) >> 6;
+				#if defined(USE_BAR)
+					driver.setPixel(i, r, g, b, 0);
+				#elif defined(USE_FASTLED)
+					leds[i] = r << 16 | g << 8 | b;
 				#endif
 			}
 		}
+	#endif
 
-		#if defined(USE_HUB75)
-			flip_matrix();
-		#elif defined(USE_BAR)
-			for (int j = 1; j < 48; j++)
-				memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
-			driver.showPixels();
-		#elif defined(USE_FASTLED)
-			LEDS.show();
-		#endif
+	#if defined(USE_HUB75)
+		flip_matrix();
+	#elif defined(USE_BAR)
+		driver.showPixels();
+	#elif defined(USE_FASTLED)
+		LEDS.show();
+	#endif
 
-		frameCounter++;
-	}
+	frameCounter++;
 
 	if (!file.available()) { // loop
 		file.seek(0);
@@ -531,7 +557,7 @@ void printFile(const char* filename) {
 
 uint8_t button_isPress = 0;
 
-void taskTwo(void* parameter) {
+void playAnimeTask(void* parameter) {
 	#ifdef USE_ANIM
 		for (;;) {
 			switch (anim) {
@@ -570,7 +596,7 @@ void taskTwo(void* parameter) {
 		}
 	#endif
 
-	Serial.println("Ending task 1");
+	Serial.println("Ending task playAnimeTask");
 	vTaskDelete(NULL);
 }
 
@@ -731,7 +757,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 				memcpy(((uint8_t*)buffer) + leds_off, data, size);
 
 				if (type == LED_Z_888_UPDATE) {
-					int ret = uncompress(
+					int ret = mz_uncompress(
 						(uint8_t*)leds,
 						(long unsigned int*) &un_size,
 						(const uint8_t*)buffer,
@@ -740,8 +766,6 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 
 					if (ret) {
 						Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
-						// memset(leds, 0, LED_TOTAL * 3);
-						// memset(buffer, 0, LED_TOTAL * 3);
 					} else {
 						#if defined(USE_HUB75)
 							for (int i = 0; i < LED_TOTAL; i++)
@@ -758,12 +782,8 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			case LED_Z_565_UPDATE:
 				#if defined(USE_HUB75)
 					memcpy(((uint8_t*)buffer) + leds_off, data, size);
-
 					if (type == LED_Z_565_UPDATE) {
-						// uint16_t size = leds_off + leds_nb;
-						// file.write((uint8_t *)&size, 2);
-						// file.write(buffer, leds_off + leds_nb);
-						int ret = uncompress(
+						int ret = mz_uncompress(
 							(uint8_t*)leds,
 							(long unsigned int*) &un_size,
 							(const uint8_t*)buffer,
@@ -771,10 +791,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 						);
 
 						if (ret) {
-							// Serial.printf("ret = %d, compress: %d, uncompress: %d\n", ret, 0, un_size);
 							Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
-							// memset(leds, 0, LED_TOTAL * 3);
-							// memset(buffer, 0, LED_TOTAL * 3);
 						} else {
 							for (int i = 0; i < LED_TOTAL; i++) {
 								display->drawPixel(i%128, i/128, ((uint16_t*)leds)[i]);
@@ -794,8 +811,8 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 				if (anim_on) {
 					anim = ANIM_PLAY;
 					xTaskCreate(
-						taskTwo,   /* Task function. */
-						"TaskTwo", /* String with name of task. */
+						playAnimeTask,   /* Task function. */
+						"playAnimeTask", /* String with name of task. */
 						8192 * 4,  /* Stack size in bytes. */
 						NULL,	   /* Parameter passed as input of the task */
 						1,		   /* Priority of the task. */
@@ -846,8 +863,12 @@ void setup() {
 		saveConfiguration(filename, config);
 	#endif
 
-	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
-	buffer = (uint8_t*)malloc(LED_TOTAL * LED_SIZE);
+	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE); //(CRGB*)ps_malloc(sizeof(CRGB) * LED_TOTAL);
+	if (!leds)
+		Serial.println("Can't allocate leds");
+	buffer = (uint8_t*)malloc(LED_TOTAL*2);
+	if (!buffer)
+		Serial.println("Can't allocate buffer");
 
 	#ifdef USE_8_OUTPUT
 		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
@@ -912,7 +933,7 @@ void setup() {
 		#ifdef USE_SD
 			// Initialize SD card
 			SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
-			for (int i=0; i< 20; i++) {
+			for (int i=0; i<20; i++) {
 				if (!filesyteme.begin(SD_CS, SPI)) {
 					Serial.println("Card Mount Failed");
 					anim_on = false;
@@ -954,9 +975,9 @@ void setup() {
 
 	#ifdef USE_ANIM
 		xTaskCreate(
-			taskTwo,   /* Task function. */
-			"TaskTwo", /* String with name of task. */
-			8192 * 4,  /* Stack size in bytes. */
+			playAnimeTask,   /* Task function. */
+			"playAnimeTask", /* String with name of task. */
+			8192 * 5,  /* Stack size in bytes. */
 			NULL,	   /* Parameter passed as input of the task */
 			1,		   /* Priority of the task. */
 			&animeTaskHandle	   /* Task handle. */
@@ -1169,17 +1190,19 @@ void loop(void) {
 	}
 #endif
 
-	// disconnecting
-	// if (!deviceConnected && oldDeviceConnected) {
-	// 	delay(500); // give the bluetooth stack the chance to get things ready
-	// 	pServer->startAdvertising(); // restart advertising
-	// 	Serial.println("start advertising");
-	// 	oldDeviceConnected = deviceConnected;
-	// }
-	// // connecting
-	// if (deviceConnected && !oldDeviceConnected) {
-	// // do stuff here on connecting
-	// 	oldDeviceConnected = deviceConnected;
-	// }
+	#ifdef USE_BLE
+		// disconnecting
+		if (!deviceConnected && oldDeviceConnected) {
+			delay(500); // give the bluetooth stack the chance to get things ready
+			pServer->startAdvertising(); // restart advertising
+			Serial.println("start advertising");
+			oldDeviceConnected = deviceConnected;
+		}
+		// connecting
+		if (deviceConnected && !oldDeviceConnected) {
+		// do stuff here on connecting
+			oldDeviceConnected = deviceConnected;
+		}
+	#endif
 }
 
