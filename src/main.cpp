@@ -224,6 +224,7 @@ Config config;
 
 uint8_t* leds;
 uint8_t* buffer;
+uint8_t brightness = BRIGHTNESS;
 
 #ifdef USE_WIFI_MANAGER
 	WiFiManager	wifiManager;
@@ -238,6 +239,38 @@ uint8_t* buffer;
 #ifdef PRINT_FPS
 	SimpleTimer	timer;
 #endif
+
+#ifdef USE_HUB75
+	void flip_matrix() {
+		display->flipDMABuffer();
+	}
+#endif
+
+void set_brightness(int b) {
+	brightness = constrain(b, 0, 255);
+	Serial.printf("Brightness set to %d\n", brightness);
+	#if defined(USE_FASTLED)
+		LEDS.setBrightness(brightness);
+	#elif defined(USE_BAR)
+		driver.setBrightness(brightness);
+	#elif defined(USE_HUB75)
+		display->setBrightness8(brightness); //0-255
+	#endif
+}
+
+void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
+	anim = ANIM_UDP;
+	delay(100);
+	#if defined(USE_BAR)
+		for (int i=0; i<LED_TOTAL; i++) {
+			driver.setPixel(i, r, g, b, w);
+		}
+		driver.showPixels();
+	#elif USE_HUB75
+		display->fillScreenRGB888(r,g,b);
+		flip_matrix();
+	#endif
+}
 
 
 #ifdef USE_BLE
@@ -275,33 +308,45 @@ uint8_t* buffer;
 					case 'B':
 						switch (rxValue[2]) {
 							case '1':
-								if (rxValue[3] == '1') {
+								if (rxValue[3] == '1')
 									next_anim = 1;
-								}
+								break;
+							case '5':
+								if (rxValue[3] == '1') {
+									set_brightness(brightness+10);
+								}	
+								break;
+							case '6':
+								if (rxValue[3] == '1') {
+									set_brightness(brightness-10);
+								}	
+								break;
+							case '2':
+								if (rxValue[3] == '1') {
+									set_all_pixel(0, 0, 0, 255);
+								}	
 								break;
 							default:
 								break;
 						}
 						break;
+					case 'C':
+						set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
+						break;
 					default:
 						break;
 				}
-				Serial.println("*********");
 				Serial.print("Received Value: ");
 				for (int i = 0; i < rxValue.length(); i++)
 					Serial.print(rxValue[i]);
-
 				Serial.println();
-				Serial.println("*********");
 			}
 		}
 	};
 #endif
 
-
 unsigned long frameCounter = 0;
 unsigned long frameLastCounter = frameCounter;
-
 
 #ifdef PRINT_FPS
 void timerCallback() {
@@ -311,7 +356,6 @@ void timerCallback() {
 	}
 }
 #endif
-
 
 #ifdef USE_ANIM
 void load_anim() {
@@ -339,12 +383,6 @@ void load_anim() {
 	}
 
 }
-
-#ifdef USE_HUB75
-	void flip_matrix() {
-		display->flipDMABuffer();
-	}
-#endif
 
 void read_anim_frame() {
 	uint16_t compress_size;
@@ -785,40 +823,6 @@ void setup() {
 	// esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 	// WiFi.mode(WIFI_STA);
 
-	#ifdef USE_BLE
-		// Create the BLE Device
-		BLEDevice::init("Spectre Hat");
-
-		// Create the BLE Server
-		pServer = BLEDevice::createServer();
-		pServer->setCallbacks(new MyServerCallbacks());
-
-		// Create the BLE Service
-		BLEService* pService = pServer->createService(SERVICE_UUID);
-
-		// Create a BLE Characteristic
-		pTxCharacteristic = pService->createCharacteristic(
-			CHARACTERISTIC_UUID_TX,
-			BLECharacteristic::PROPERTY_NOTIFY
-		);
-
-		pTxCharacteristic->addDescriptor(new BLE2902());
-
-		BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
-			CHARACTERISTIC_UUID_RX,
-			BLECharacteristic::PROPERTY_WRITE
-		);
-
-		pRxCharacteristic->setCallbacks(new MyCallbacks());
-
-		// Start the service
-		pService->start();
-
-		// Start advertising
-		pServer->getAdvertising()->start();
-		Serial.println("Waiting a client connection to notify...");
-	#endif
-
 	pinMode(21, OUTPUT);
 	digitalWrite(21, 1);
 	pinMode(0, INPUT);
@@ -865,10 +869,6 @@ void setup() {
 		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
-	#ifdef USE_FASTLED
-		LEDS.setBrightness(BRIGHTNESS);
-	#endif
-	
 	#ifdef USE_POWER_LIMITER
 		LEDS.setMaxPowerInVoltsAndMilliamps(LED_VCC, LED_MAX_CURRENT);
 	#endif
@@ -877,8 +877,6 @@ void setup() {
 	
 	#ifdef USE_BAR
 		driver.initled((uint8_t*)leds, pins, CLOCK_PIN, LATCH_PIN);
-		// driver.initled((uint8_t*)leds, pins, NUM_STRIPS, LED_BY_STRIP, ORDER_GRBW);
-		driver.setBrightness(BRIGHTNESS);
 	#endif
 
 	// testFileIO(SD, "/music.Z565", 40, 1);
@@ -904,9 +902,10 @@ void setup() {
 		display = new MatrixPanel_I2S_DMA(mxconfig);
 
 		display->begin();  // setup display with pins as pre-defined in the library
-		display->setBrightness8(MATRIX_BRIGHNESS); //0-255
 		// flip_matrix();
 	#endif
+
+	set_brightness(BRIGHTNESS);
 
 	#if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 
@@ -922,10 +921,6 @@ void setup() {
 					root = filesyteme.open("/");
 					file = root.openNextFile();
 					anim_on = true;
-					#ifdef USE_FTP
-						ftpSrv.begin(FTP_USER, FTP_PASS);
-						Serial.println("FTP Server Start");
-					#endif
 					break;
 				}
 			}
@@ -940,10 +935,6 @@ void setup() {
 				root = filesyteme.open("/");
 				file = root.openNextFile();
 				anim_on = true;
-				#ifdef USE_FTP
-					ftpSrv.begin(FTP_USER, FTP_PASS);
-					Serial.println("FTP Server Start");
-				#endif
 			}
 		#endif
 
@@ -957,10 +948,6 @@ void setup() {
 				root = filesyteme.open("/");
 				file = root.openNextFile();
 				anim_on = true;
-				#ifdef USE_FTP
-					ftpSrv.begin(FTP_USER, FTP_PASS);
-					Serial.println("FTP Server Start");
-				#endif
 			}
 		#endif
 	#endif
@@ -1069,6 +1056,13 @@ void setup() {
 		}
 	#endif
 
+	#ifdef USE_FTP
+		if (anim_on) {
+			ftpSrv.begin(FTP_USER, FTP_PASS);
+			Serial.println("FTP Server Start");
+		}
+	#endif
+
 	#ifdef USE_OTA
 		ArduinoOTA.setPort(OTA_PORT);
 		ArduinoOTA.setHostname(hostname);
@@ -1110,6 +1104,41 @@ void setup() {
 
 	#ifdef PRINT_FPS
 		timer.setTimer(5000, timerCallback, 6000); // Interval to measure FPS  (millis, function called, times invoked for 1000ms around 1 hr and half)
+	#endif
+
+	#ifdef USE_BLE
+		Serial.println("Start BLE");
+		// Create the BLE Device
+		BLEDevice::init("Spectre Hat");
+
+		// Create the BLE Server
+		pServer = BLEDevice::createServer();
+		pServer->setCallbacks(new MyServerCallbacks());
+
+		// Create the BLE Service
+		BLEService* pService = pServer->createService(SERVICE_UUID);
+
+		// Create a BLE Characteristic
+		pTxCharacteristic = pService->createCharacteristic(
+			CHARACTERISTIC_UUID_TX,
+			BLECharacteristic::PROPERTY_NOTIFY
+		);
+
+		pTxCharacteristic->addDescriptor(new BLE2902());
+
+		BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
+			CHARACTERISTIC_UUID_RX,
+			BLECharacteristic::PROPERTY_WRITE
+		);
+
+		pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+		// Start the service
+		pService->start();
+
+		// Start advertising
+		pServer->getAdvertising()->start();
+		Serial.println("Waiting a client connection to notify...");
 	#endif
 }
 
