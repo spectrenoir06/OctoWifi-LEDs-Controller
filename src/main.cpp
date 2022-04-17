@@ -234,33 +234,35 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 
 #ifdef USE_BLE
-	#include <BLEDevice.h>
-	#include <BLEUtils.h>
-	#include <BLEServer.h>
-	#include <BLE2902.h>
+	#include <NimBLEDevice.h>
+	
+	// #include <BLEDevice.h>
+	// #include <BLEUtils.h>
+	// #include <BLEServer.h>
+	// #include <BLE2902.h>
 
 	#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 	#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 	#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-	BLEServer* pServer = NULL;
-	BLECharacteristic* pTxCharacteristic;
+	static NimBLEServer* pServer = NULL;
+	NimBLECharacteristic* pTxCharacteristic;
 	bool deviceConnected = false;
 	bool oldDeviceConnected = false;
 	uint8_t txValue = 0;
 
-	class MyServerCallbacks : public BLEServerCallbacks {
-		void onConnect(BLEServer* pServer) {
+	class MyServerCallbacks : public NimBLEServerCallbacks {
+		void onConnect(NimBLEServer* pServer) {
 			deviceConnected = true;
 		};
 
-		void onDisconnect(BLEServer* pServer) {
+		void onDisconnect(NimBLEServer* pServer) {
 			deviceConnected = false;
 		}
 	};
 
-	class MyCallbacks : public BLECharacteristicCallbacks {
-		void onWrite(BLECharacteristic* pCharacteristic) {
+	class MyCallbacks : public NimBLECharacteristicCallbacks {
+		void onWrite(NimBLECharacteristic* pCharacteristic) {
 			std::string rxValue = pCharacteristic->getValue();
 			Serial.print("Received Value: ");
 			for (int i = 0; i < rxValue.length(); i++)
@@ -1088,26 +1090,27 @@ void setup() {
 	#ifdef USE_BLE
 		Serial.println("Start BLE");
 		// Create the BLE Device
-		BLEDevice::init("Spectre Hat");
+		NimBLEDevice::init("Spectre Hat");
+		NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+
+		NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
 		// Create the BLE Server
-		pServer = BLEDevice::createServer();
+		pServer = NimBLEDevice::createServer();
 		pServer->setCallbacks(new MyServerCallbacks());
 
 		// Create the BLE Service
-		BLEService* pService = pServer->createService(SERVICE_UUID);
+		NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
 		// Create a BLE Characteristic
 		pTxCharacteristic = pService->createCharacteristic(
 			CHARACTERISTIC_UUID_TX,
-			BLECharacteristic::PROPERTY_NOTIFY
+			NIMBLE_PROPERTY::NOTIFY
 		);
-
-		pTxCharacteristic->addDescriptor(new BLE2902());
 
 		BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
 			CHARACTERISTIC_UUID_RX,
-			BLECharacteristic::PROPERTY_WRITE
+			NIMBLE_PROPERTY::WRITE
 		);
 
 		pRxCharacteristic->setCallbacks(new MyCallbacks());
