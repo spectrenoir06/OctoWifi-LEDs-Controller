@@ -35,6 +35,14 @@ jobs:
       run: pio run -e Hat_V2_AP
     - name: Build Hat_V2_BLE
       run: pio run -e Hat_V2_BLE
+    - name: Build Glasses_Wifi
+      run: pio run -e Glasses_Wifi
+    - name: Build Glasses_AP
+      run: pio run -e Glasses_AP
+    - name: Build Glasses_AP_BLE
+      run: pio run -e Glasses_AP_BLE
+    - name: Build Glasses_BLE
+      run: pio run -e Glasses_BLE
     - name: Deploy
       env:
         SUPER_SECRET: ${{ secrets.TOKEN }} 
@@ -44,10 +52,20 @@ jobs:
         mv .pio/build/Hat_V2_AP/firmware.bin octoWifi_Hat_V2_AP.bin
         mv .pio/build/Hat_V2_BLE/firmware.bin octoWifi_Hat_V2_BLE.bin
 
-        curl -sSF file=@octoWifi_Hat_V1.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@octoWifi_Hat_V2.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
-        curl -sSF file=@octoWifi_Hat_V2_AP.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        mv .pio/build/Glasses_Wifi/firmware.bin   octoWifi_Glasses_Wifi.bin
+        mv .pio/build/Glasses_AP/firmware.bin     octoWifi_Glasses_AP.bin
+        mv .pio/build/Glasses_AP_BLE/firmware.bin octoWifi_Glasses_AP_BLE.bin
+        mv .pio/build/Glasses_BLE/firmware.bin    octoWifi_Glasses_BLE.bin
+
+        curl -sSF file=@octoWifi_Hat_V1.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@octoWifi_Hat_V2.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@octoWifi_Hat_V2_AP.bin  'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         curl -sSF file=@octoWifi_Hat_V2_BLE.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+
+        curl -sSF file=@octoWifi_Glasses_Wifi.bin   'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@octoWifi_Glasses_AP.bin     'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@octoWifi_Glasses_AP_BLE.bin 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
+        curl -sSF file=@octoWifi_Glasses_BLE.bin    'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET
         
         echo `TZ="Europe/Paris" date '+%F %T'`" git:"`git rev-parse --short HEAD` > octoWifi.info
         curl -sSF file=@octoWifi.info 'http://antoine.doussaud.org:25478/upload?token='$SUPER_SECRET

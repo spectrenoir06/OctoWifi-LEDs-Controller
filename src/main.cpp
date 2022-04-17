@@ -1,36 +1,15 @@
-#include <WiFi.h>
+#include "miniz.h"
+
+#if defined(USE_WIFI_MANAGER) || defined(USE_AP)
+	#include <WiFi.h>
+#endif
+
 
 #ifdef USE_FASTLED
 	// #define FASTLED_ESP32_I2S
 	// #define FASTLED_ALLOW_INTERRUPTS
 	#include <FastLED.h>
 #endif
-
-// #define USE_AP				// The driver start has a WiFi Access point
-// #define USE_WIFI				// The driver use WIFI_SSID and WIFI_PASSWORD
-// #define USE_WIFI_MANAGER		// The driver use Wifi manager
-
-//#define USE_RESET_BUTTON		// Can reset Wifi manager with button
-
-// #define USE_POWER_LIMITER	// Activate power limitaton ( edit: LED_VCC and LED_MAX_CURRENT )
-// #define USE_OTA				// Activate Over the Air Update
-// #define USE_ANIM				// Activate animation in SPI filesysteme (need BROTLI)
-// #define USE_FTP				// Activate FTP server (need USE ANIM)
-// #define USE_CONFIG			// Activate config menu on WifiManger
-
-// #define USE_8_OUTPUT			// Activate 8 LEDs output
-// #define USE_HUB75
-// #define USE_1_OUTPUT
-
-// #define USE_UDP
-// #define USE_ZLIB
-// #define USE_SPIFFS
-// #define USE_SD
-// #define USE_SD_MMC
-
-// #define MINIZ_USE_PSRAM
-
-// #define PRINT_DEBUG
 
 #define FIRMWARE_VERSION	"1.0"
 
@@ -66,30 +45,20 @@ const int LEDS_BY_UNI = 170;
 	MatrixPanel_I2S_DMA *display = nullptr;
 #endif
 
-#if defined(USE_BAR)
-	// #include "I2SClocklessLedDriver.h"
-	#include "I2SClocklessVirtualLedDriver.h"
-	int pins[3] = {
-		LED_PORT_0,
-		LED_PORT_1,
-		LED_PORT_2
-	};
-	I2SClocklessVirtualLedDriver driver;
-#endif
-
 #ifdef USE_WIFI_MANAGER
 	#include <WiFiManager.h>
 #endif
+
+const int SD_CS = 13;
+const int SD_MOSI = 15;
+const int SD_SCK = 14;
+const int SD_MISO = 2;
 
 #if defined(USE_CONFIG) || defined(USE_FTP) || defined(USE_ANIM)
 	#ifdef USE_SD
 		#include "FS.h"
 		#include "SD.h"
 		#include "SPI.h"
-		const int SD_CS = 13;
-		const int SD_MOSI = 15;
-		const int SD_SCK = 14;
-		const int SD_MISO = 2;
 		#define filesyteme SD
 		#ifdef USE_FTP
 			#include "ESP32FtpServer.h"
@@ -99,6 +68,9 @@ const int LEDS_BY_UNI = 170;
 		#include "FS.h"
 		#include "SD_MMC.h"
 		#define filesyteme SD_MMC
+		#ifdef USE_FTP
+			#include "ESP32FtpServer.h"
+		#endif
 	#endif
 	#ifdef USE_SPIFFS
 		#include "SPIFFS.h"
@@ -242,8 +214,6 @@ void set_brightness(int b) {
 	Serial.printf("Brightness set to %d\n", brightness);
 	#if defined(USE_FASTLED)
 		LEDS.setBrightness(brightness);
-	#elif defined(USE_BAR)
-		driver.setBrightness(brightness);
 	#elif defined(USE_HUB75)
 		display->setBrightness8(brightness); //0-255
 	#endif
@@ -252,11 +222,10 @@ void set_brightness(int b) {
 void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	anim = ANIM_UDP;
 	delay(100);
-	#if defined(USE_BAR)
-		for (int i=0; i<LED_TOTAL; i++) {
-			driver.setPixel(i, r, g, b, w);
-		}
-		driver.showPixels();
+	#if defined(USE_FASTLED)
+		for (int i=0; i<LED_TOTAL; i++)
+			((CRGB*)leds)[i] = r << 16 | g << 8 | b;
+		LEDS.show();
 	#elif USE_HUB75
 		display->fillScreenRGB888(r,g,b);
 		flip_matrix();
@@ -293,29 +262,31 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	class MyCallbacks : public BLECharacteristicCallbacks {
 		void onWrite(BLECharacteristic* pCharacteristic) {
 			std::string rxValue = pCharacteristic->getValue();
+			Serial.print("Received Value: ");
+			for (int i = 0; i < rxValue.length(); i++)
+				Serial.print(rxValue[i]);
+			Serial.println();
 
 			if (rxValue.length() > 0 && rxValue[0] == '!') {
 				switch (rxValue[1]) {
 					case 'B':
 						switch (rxValue[2]) {
 							case '1':
-								if (rxValue[3] == '1')
-									next_anim = 1;
+								#ifdef USE_ANIME
+									if (rxValue[3] == '1')
+										next_anim = 1;
+								#endif
 								break;
 							case '5':
-								if (rxValue[3] == '1') {
 									set_brightness(brightness+10);
-								}	
 								break;
 							case '6':
-								if (rxValue[3] == '1') {
+								if (rxValue[3] == '1')
 									set_brightness(brightness-10);
-								}	
 								break;
 							case '2':
-								if (rxValue[3] == '1') {
+								if (rxValue[3] == '1')
 									set_all_pixel(0, 0, 0, 255);
-								}	
 								break;
 							default:
 								break;
@@ -327,10 +298,6 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					default:
 						break;
 				}
-				Serial.print("Received Value: ");
-				for (int i = 0; i < rxValue.length(); i++)
-					Serial.print(rxValue[i]);
-				Serial.println();
 			}
 		}
 	};
@@ -375,7 +342,7 @@ void load_anim() {
 
 }
 #define MIN(a,b) (((a)<(b))?(a):(b))
-#define BUF_SIZE 1024
+#define BUF_SIZE (50*1)
 
 void read_anim_frame() {
 	uint16_t compress_size;
@@ -394,9 +361,9 @@ void read_anim_frame() {
 	
 	file.read((uint8_t*)&compress_size, 2);
 	uint16_t infile_remaining = compress_size;
-
-	if (mz_inflateInit(&stream)) {
-		Serial.printf("inflateInit() failed!\n");
+	int ret = mz_inflateInit(&stream);
+	if (ret) {
+		Serial.printf("inflateInit() failed! %s\n", mz_error(ret));
 		return;
 	}
 
@@ -454,23 +421,21 @@ void read_anim_frame() {
 				display->drawPixel(i % MATRIX_W, i / MATRIX_W, ((uint16_t*)leds)[i]);
 	#else
 		if (head[0] == LED_Z_565) {
-			for (int i = 0; i < LED_TOTAL; i++){
+			for (int i = 0; i < un_size/2; i++){
 				uint8_t r = ((((((uint16_t*)buffer)[i] >> 11) & 0x1F) * 527) + 23) >> 6;
 				uint8_t g = ((((((uint16_t*)buffer)[i] >> 5) & 0x3F) * 259) + 33) >> 6;
 				uint8_t b = (((((uint16_t*)buffer)[i] & 0x1F) * 527) + 23) >> 6;
-				#if defined(USE_BAR)
-					driver.setPixel(i, r, g, b, 0);
-				#elif defined(USE_FASTLED)
-					leds[i] = r << 16 | g << 8 | b;
+				#if defined(USE_FASTLED)
+					((CRGB*)leds)[i] = r << 16 | g << 8 | b;
 				#endif
 			}
+		} else {
+			
 		}
 	#endif
 
 	#if defined(USE_HUB75)
 		flip_matrix();
-	#elif defined(USE_BAR)
-		driver.showPixels();
 	#elif defined(USE_FASTLED)
 		LEDS.show();
 	#endif
@@ -560,20 +525,6 @@ uint8_t button_isPress = 0;
 void playAnimeTask(void* parameter) {
 	#ifdef USE_ANIM
 		for (;;) {
-			switch (anim) {
-				case ANIM_START:
-					load_anim();
-					break;
-				case ANIM_PLAY:
-					if (millis() - previousMillis >= wait) {
-						previousMillis = millis();
-						read_anim_frame();
-						// vTaskDelay(wait / portTICK_PERIOD_MS);
-					}
-					break;
-				case ANIM_UDP:
-					break;
-			}
 			if (digitalRead(0) == LOW || next_anim) {
 				if (!button_isPress || next_anim) {
 					button_isPress = 1;
@@ -589,8 +540,22 @@ void playAnimeTask(void* parameter) {
 					}
 					vTaskDelay(20 / portTICK_PERIOD_MS);
 				}
-			} else {
+			} else
 				button_isPress = 0;
+
+			switch (anim) {
+				case ANIM_START:
+					load_anim();
+					break;
+				case ANIM_PLAY:
+					if (millis() - previousMillis >= wait) {
+						previousMillis = millis();
+						read_anim_frame();
+						// vTaskDelay(wait / portTICK_PERIOD_MS);
+					}
+					break;
+				case ANIM_UDP:
+					break;
 			}
 			vTaskDelay(1 / portTICK_PERIOD_MS);
 		}
@@ -702,16 +667,14 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 		case LED_RGB_565:
 		case LED_RGB_565_UPDATE:
 			if (len - 6 == size) {
-				for (uint16_t i = 0; i < (size/2); i++) {
+				for (uint32_t i = 0; i < (size/2); i++) {
 					#if defined(USE_HUB75)
 						display->drawPixel((i + leds_off) % MATRIX_W, (i + leds_off) / MATRIX_W, data16[i]);
 					#else
 						uint8_t r = ((((data16[i] >> 11) & 0x1F) * 527) + 23) >> 6;
 						uint8_t g = ((((data16[i] >> 5) & 0x3F) * 259) + 33) >> 6;
 						uint8_t b = (((data16[i] & 0x1F) * 527) + 23) >> 6;
-						#if defined(USE_BAR)
-							driver.setPixel(i, r, g, b, 0);
-						#elif defined(USE_FASTLED)
+						#if defined(USE_FASTLED)
 							leds[i] = r << 16 | g << 8 | b;
 						#endif
 					#endif
@@ -723,10 +686,6 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			if (type == LED_RGB_565_UPDATE) {
 				#if defined(USE_HUB75)
 					flip_matrix();
-				#elif defined(USE_BAR)
-					for (int j = 1; j < 48; j++)
-						memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
-					driver.showPixels();
 				#elif defined(USE_FASTLED)
 					LEDS.show();
 				#endif
@@ -738,10 +697,6 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 				flip_matrix();
 			#elif defined(USE_FASTLED)
 				LEDS.show();
-			#elif defined(USE_BAR)
-				for (int j = 1; j < 48; j++)
-					memcpy(((uint8_t*)leds) + 256 * j * 4, leds, 256 * 4);
-				driver.showPixels();
 			#endif
 			frameCounter++;
 			break;
@@ -780,7 +735,6 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 				break;
 			case LED_Z_565:
 			case LED_Z_565_UPDATE:
-				#if defined(USE_HUB75)
 					memcpy(((uint8_t*)buffer) + leds_off, data, size);
 					if (type == LED_Z_565_UPDATE) {
 						int ret = mz_uncompress(
@@ -793,16 +747,18 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 						if (ret) {
 							Serial.printf("ret: %d == %s, compress: %d, uncompress: %d, r: %d\n", ret, mz_error(ret), 0, un_size, 0);
 						} else {
-							for (int i = 0; i < LED_TOTAL; i++) {
-								display->drawPixel(i%128, i/128, ((uint16_t*)leds)[i]);
-							}
-							flip_matrix();
+							#if defined(USE_HUB75)
+								for (int i = 0; i < LED_TOTAL; i++) {
+									display->drawPixel(i%128, i/128, ((uint16_t*)leds)[i]);
+								}
+								flip_matrix();
+							#endif
 							frameCounter++;
 						}
 					}
-				#else
-					printf("Z565 is not supported with 24Bit LEDs\n");
-				#endif
+				// #else
+					// printf("Z565 is not supported with 24Bit LEDs\n");
+				// #endif
 				break;
 		#endif
 
@@ -810,13 +766,14 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 			#ifdef USE_ANIM
 				if (anim_on) {
 					anim = ANIM_PLAY;
-					xTaskCreate(
+					xTaskCreatePinnedToCore(
 						playAnimeTask,   /* Task function. */
 						"playAnimeTask", /* String with name of task. */
-						8192 * 4,  /* Stack size in bytes. */
+						8192 * 2,  /* Stack size in bytes. */
 						NULL,	   /* Parameter passed as input of the task */
 						1,		   /* Priority of the task. */
-						&animeTaskHandle	   /* Task handle. */
+						&animeTaskHandle,	   /* Task handle. */
+						1
 					);
 
 				}
@@ -840,9 +797,10 @@ void setup() {
 	// esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 	// WiFi.mode(WIFI_STA);
 
-	pinMode(21, OUTPUT);
-	digitalWrite(21, 1);
-	pinMode(0, INPUT);
+	// pinMode(21, OUTPUT);
+	// digitalWrite(21, 1);
+	// pinMode(0, INPUT);
+	// digitalWrite(0, 1);
 
 	#if defined(USE_WIFI_MANAGER) && defined(USE_RESET_BUTTON)
 		pinMode(RESET_WIFI_PIN, INPUT);
@@ -863,31 +821,31 @@ void setup() {
 		saveConfiguration(filename, config);
 	#endif
 
-	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE); //(CRGB*)ps_malloc(sizeof(CRGB) * LED_TOTAL);
+	leds = (uint8_t*)malloc(LED_TOTAL * LED_SIZE); //(CRGB*)malloc(sizeof(CRGB) * LED_TOTAL);
 	if (!leds)
 		Serial.println("Can't allocate leds");
-	buffer = (uint8_t*)malloc(LED_TOTAL*2);
+	buffer = (uint8_t*)malloc(LED_TOTAL * 2);
 	if (!buffer)
 		Serial.println("Can't allocate buffer");
 
 	#ifdef USE_8_OUTPUT
-		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_2, COLOR_ORDER>((CRGB*)leds, 2 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_3, COLOR_ORDER>((CRGB*)leds, 3 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_4, COLOR_ORDER>((CRGB*)leds, 4 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_5, COLOR_ORDER>((CRGB*)leds, 5 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_6, COLOR_ORDER>((CRGB*)leds, 6 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_7, COLOR_ORDER>((CRGB*)leds, 7 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_2, COLOR_ORDER>((CRGB*)leds, 2 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_3, COLOR_ORDER>((CRGB*)leds, 3 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_4, COLOR_ORDER>((CRGB*)leds, 4 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_5, COLOR_ORDER>((CRGB*)leds, 5 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_6, COLOR_ORDER>((CRGB*)leds, 6 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_7, COLOR_ORDER>((CRGB*)leds, 7 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
 	#ifdef USE_1_OUTPUT
-		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
 	#ifdef USE_2_OUTPUT
-		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
-		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * LED_BY_STRIP, LED_BY_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_0, COLOR_ORDER>((CRGB*)leds, 0 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+		LEDS.addLeds<LED_TYPE, LED_PORT_1, COLOR_ORDER>((CRGB*)leds, 1 * NUM_LEDS_PER_STRIP, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
 	#endif
 
 	#ifdef USE_POWER_LIMITER
@@ -895,12 +853,6 @@ void setup() {
 	#endif
 
 	Serial.println("LEDs driver start");
-	
-	#ifdef USE_BAR
-		driver.initled((uint8_t*)leds, pins, CLOCK_PIN, LATCH_PIN);
-	#endif
-
-	// testFileIO(SD, "/music.Z565", 40, 1);
 
 	#if defined(USE_HUB75)
 		HUB75_I2S_CFG::i2s_pins _pins = {R1_PIN, G1_PIN, B1_PIN, R2_PIN, G2_PIN, B2_PIN, A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN};
@@ -949,6 +901,9 @@ void setup() {
 
 		#ifdef USE_SD_MMC
 			pinMode(2, INPUT_PULLUP);
+			pinMode(15, PULLUP);
+			pinMode(14, PULLUP);
+			pinMode(13, PULLUP);
 			if (!filesyteme.begin("/sdcard", true)) {
 				Serial.println("Card Mount Failed");
 				anim_on = false;
@@ -974,13 +929,14 @@ void setup() {
 	#endif
 
 	#ifdef USE_ANIM
-		xTaskCreate(
+			xTaskCreatePinnedToCore(
 			playAnimeTask,   /* Task function. */
 			"playAnimeTask", /* String with name of task. */
-			8192 * 5,  /* Stack size in bytes. */
+			8192 * 2,  /* Stack size in bytes. */
 			NULL,	   /* Parameter passed as input of the task */
 			1,		   /* Priority of the task. */
-			&animeTaskHandle	   /* Task handle. */
+			&animeTaskHandle,	   /* Task handle. */
+			1
 		);
 	#endif
 
@@ -1031,7 +987,7 @@ void setup() {
 				ESP.restart();
 		}
 	#elif defined(USE_AP)
-		Serial.println("Setting AP (Access Point)");
+		Serial.println("\nSetting AP (Access Point)");
 		WiFi.softAP(AP_SSID, AP_PASSWORD);
 		IPAddress IP = WiFi.softAPIP();
 		Serial.print("AP IP address: ");
@@ -1051,11 +1007,13 @@ void setup() {
 		}
 	#endif
 
-	Serial.print("Connected to:\t");
-	Serial.println(WiFi.SSID());
-	Serial.print("IP address:\t");
-	Serial.println(WiFi.localIP());
-	WiFi.setSleep(false);
+	#if defined(USE_WIFI_MANAGER)
+		Serial.print("\nConnected to:\t");
+		Serial.println(WiFi.SSID());
+		Serial.print("IP address:\t");
+		Serial.println(WiFi.localIP());
+		WiFi.setSleep(false);
+	#endif
 
 	#ifdef USE_WIFI_MANAGER
 		wifiManager.setConfigPortalBlocking(false);
@@ -1190,19 +1148,19 @@ void loop(void) {
 	}
 #endif
 
-	#ifdef USE_BLE
-		// disconnecting
-		if (!deviceConnected && oldDeviceConnected) {
-			delay(500); // give the bluetooth stack the chance to get things ready
-			pServer->startAdvertising(); // restart advertising
-			Serial.println("start advertising");
-			oldDeviceConnected = deviceConnected;
-		}
-		// connecting
-		if (deviceConnected && !oldDeviceConnected) {
-		// do stuff here on connecting
-			oldDeviceConnected = deviceConnected;
-		}
-	#endif
+	// #ifdef USE_BLE
+	// 	// disconnecting
+	// 	if (!deviceConnected && oldDeviceConnected) {
+	// 		delay(500); // give the bluetooth stack the chance to get things ready
+	// 		pServer->startAdvertising(); // restart advertising
+	// 		Serial.println("start advertising");
+	// 		oldDeviceConnected = deviceConnected;
+	// 	}
+	// 	// connecting
+	// 	if (deviceConnected && !oldDeviceConnected) {
+	// 	// do stuff here on connecting
+	// 		oldDeviceConnected = deviceConnected;
+	// 	}
+	// #endif
 }
 
