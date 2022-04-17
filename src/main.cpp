@@ -13,9 +13,9 @@
 
 #define FIRMWARE_VERSION	"1.0"
 
-#define DEFAULT_HOSTNAME	"ESP32_LEDs"
+#define DEFAULT_HOSTNAME	HOSTNAME
 
-#define AP_SSID				"ESP32_LEDs_AP"
+#define AP_SSID				HOSTNAME
 #define AP_PASSWORD			"WIFI_PASSWORD"
 
 #define WIFI_SSID			""
@@ -235,11 +235,6 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 #ifdef USE_BLE
 	#include <NimBLEDevice.h>
-	
-	// #include <BLEDevice.h>
-	// #include <BLEUtils.h>
-	// #include <BLEServer.h>
-	// #include <BLE2902.h>
 
 	#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 	#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -274,17 +269,17 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					case 'B':
 						switch (rxValue[2]) {
 							case '1':
-								#ifdef USE_ANIME
+								#ifdef USE_ANIM
 									if (rxValue[3] == '1')
 										next_anim = 1;
 								#endif
 								break;
 							case '5':
-									set_brightness(brightness+10);
+									set_brightness(brightness+2);
 								break;
 							case '6':
 								if (rxValue[3] == '1')
-									set_brightness(brightness-10);
+									set_brightness(brightness-2);
 								break;
 							case '2':
 								if (rxValue[3] == '1')
@@ -344,7 +339,7 @@ void load_anim() {
 
 }
 #define MIN(a,b) (((a)<(b))?(a):(b))
-#define BUF_SIZE (50*1)
+#define BUF_SIZE (256*1)
 
 void read_anim_frame() {
 	uint16_t compress_size;
@@ -540,6 +535,18 @@ void playAnimeTask(void* parameter) {
 						root = filesyteme.open("/");
 						file = root.openNextFile();
 					}
+					#ifdef USE_BLE
+						if (deviceConnected) {
+							char *str = (char*)malloc(100);
+							memset(str, 0, 100);
+							strcat(str, "load anim: ");
+							strcat(str, file.name());
+							strcat(str, "\r\n");
+							pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+							pTxCharacteristic->notify();
+							// free(ptr);
+						}
+					#endif
 					vTaskDelay(20 / portTICK_PERIOD_MS);
 				}
 			} else
@@ -924,7 +931,9 @@ void setup() {
 			} else {
 				Serial.println("mounting SPIFFS OK");
 				root = filesyteme.open("/");
-				file = root.openNextFile();
+				file = filesyteme.open("/start.Z565", "r");
+				if (!file.available())
+					file = root.openNextFile();
 				anim_on = true;
 			}
 		#endif
@@ -975,12 +984,12 @@ void setup() {
 
 			if (!digitalRead(RESET_WIFI_PIN)) {
 				Serial.printf("Start config\n");
-				wifiManager.startConfigPortal("ESP32_LEDs");
+				wifiManager.startConfigPortal(HOSTNAME);
 			}
 			else
 		#endif
 		{
-			bool rest = wifiManager.autoConnect("ESP32_LEDs");
+			bool rest = wifiManager.autoConnect(HOSTNAME);
 
 			if (rest) {
 				Serial.println("Wifi connected");
@@ -1090,10 +1099,10 @@ void setup() {
 	#ifdef USE_BLE
 		Serial.println("Start BLE");
 		// Create the BLE Device
-		NimBLEDevice::init("Spectre Hat");
+		NimBLEDevice::init(HOSTNAME);
 		NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-		NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
+		// NimBLEDevice::setSecurityAuth(/*BLE_SM_PAIR_AUTHREQ_BOND | BLE_SM_PAIR_AUTHREQ_MITM |*/ BLE_SM_PAIR_AUTHREQ_SC);
 
 		// Create the BLE Server
 		pServer = NimBLEDevice::createServer();
@@ -1125,45 +1134,30 @@ void setup() {
 }
 
 void loop(void) {
-#ifdef USE_WIFI_MANAGER
-	wifiManager.process();
-#endif
+	#ifdef USE_WIFI_MANAGER
+		wifiManager.process();
+	#endif
 
-#ifdef PRINT_FPS
-	timer.run();
-#endif
+	#ifdef PRINT_FPS
+		timer.run();
+	#endif
 
-#ifdef USE_OTA
-	ArduinoOTA.handle();
-#endif
+	#ifdef USE_OTA
+		ArduinoOTA.handle();
+	#endif
 
-#ifdef USE_FTP
-	ftpSrv.handleFTP();
-#endif
+	#ifdef USE_FTP
+		ftpSrv.handleFTP();
+	#endif
 
-#if defined(USE_WIFI_MANAGER) && defined(USE_RESET_BUTTON)
-	if (!digitalRead(RESET_WIFI_PIN)) {
-		Serial.printf("Press reset Wifi\nStart config\n");
-		wifiManager.setConfigPortalBlocking(true);
-		wifiManager.startConfigPortal("ESP32_LEDs");
-		Serial.printf("Finish config reset\n");
-		ESP.restart();
-	}
-#endif
-
-	// #ifdef USE_BLE
-	// 	// disconnecting
-	// 	if (!deviceConnected && oldDeviceConnected) {
-	// 		delay(500); // give the bluetooth stack the chance to get things ready
-	// 		pServer->startAdvertising(); // restart advertising
-	// 		Serial.println("start advertising");
-	// 		oldDeviceConnected = deviceConnected;
-	// 	}
-	// 	// connecting
-	// 	if (deviceConnected && !oldDeviceConnected) {
-	// 	// do stuff here on connecting
-	// 		oldDeviceConnected = deviceConnected;
-	// 	}
-	// #endif
+	#if defined(USE_WIFI_MANAGER) && defined(USE_RESET_BUTTON)
+		if (!digitalRead(RESET_WIFI_PIN)) {
+			Serial.printf("Press reset Wifi\nStart config\n");
+			wifiManager.setConfigPortalBlocking(true);
+			wifiManager.startConfigPortal(HOSTNAME);
+			Serial.printf("Finish config reset\n");
+			ESP.restart();
+		}
+	#endif
 }
 
