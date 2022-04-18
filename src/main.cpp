@@ -1127,6 +1127,10 @@ void setup() {
 		// Start the service
 		pService->start();
 
+		BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+		// pAdvertising->setAppearance(0x7<<6); // glasses
+		pAdvertising->setAppearance(0x01F << 6 | 0x06); // LEDs 
+
 		// Start advertising
 		pServer->getAdvertising()->start();
 		Serial.println("Waiting a client connection to notify...");
