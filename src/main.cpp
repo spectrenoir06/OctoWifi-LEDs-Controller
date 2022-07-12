@@ -5,6 +5,11 @@
 #endif
 
 
+#include <esp_now.h>
+uint8_t broadcastAddress[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+#include <WiFi.h>
+
+
 #ifdef USE_FASTLED
 	// #define FASTLED_ESP32_I2S
 	// #define FASTLED_ALLOW_INTERRUPTS
@@ -211,7 +216,7 @@ uint8_t brightness = BRIGHTNESS;
 
 void set_brightness(int b) {
 	brightness = constrain(b, 0, 255);
-	Serial.printf("Brightness set to %d\n", brightness);
+	// Serial.printf("Brightness set to %d\n", brightness);
 	#if defined(USE_FASTLED)
 		LEDS.setBrightness(brightness);
 	#elif defined(USE_HUB75)
@@ -221,7 +226,7 @@ void set_brightness(int b) {
 
 void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	anim = ANIM_UDP;
-	delay(100);
+	// delay(100);
 	#if defined(USE_FASTLED)
 		for (int i=0; i<LED_TOTAL; i++)
 			((CRGB*)leds)[i] = r << 16 | g << 8 | b;
@@ -230,6 +235,48 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 		display->fillScreenRGB888(r,g,b);
 		flip_matrix();
 	#endif
+}
+
+
+uint8_t current_anim = 0;
+uint8_t change_anim = 0;
+
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
+	// for (int i = 0; i < len; i++) {
+	// 	Serial.printf("%d\t", incomingData[i]);
+	// }
+	// Serial.println("");
+
+	if (incomingData[8] == 0) {
+		set_all_pixel(incomingData[5], incomingData[6], incomingData[7], 0);
+		current_anim = 0;
+	} else {
+		if (current_anim != incomingData[8]) {
+			uint8_t anim = incomingData[8];
+			if (anim > 8)
+				anim = 8;
+			change_anim  = anim; 
+			current_anim = incomingData[8];
+		}
+	}
+
+	if (incomingData[1] > 127)
+		digitalWrite(21, 1);
+	else
+		digitalWrite(21, 0);
+	
+	if (incomingData[2] > 127)
+		digitalWrite(22, 1);
+	else
+		digitalWrite(22, 0);
+	
+	if (incomingData[3] > 127)
+		digitalWrite(25, 1);
+	else
+		digitalWrite(25, 0);
+
+	set_brightness(incomingData[4]);
 }
 
 
@@ -552,6 +599,15 @@ void playAnimeTask(void* parameter) {
 			} else
 				button_isPress = 0;
 
+			if (change_anim) {
+				file.close();
+				char str[16];
+				snprintf(str, 16, "/%d.Z565", change_anim);
+				file = filesyteme.open(str);
+				anim = ANIM_START;
+				change_anim = 0;
+			}
+
 			switch (anim) {
 				case ANIM_START:
 					load_anim();
@@ -803,6 +859,21 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 void setup() {
 	psramInit();
 	Serial.begin(115200);
+
+	WiFi.mode(WIFI_STA);
+
+	// Init ESP-NOW
+	if (esp_now_init() != ESP_OK) {
+		Serial.println("Error initializing ESP-NOW");
+		return;
+	}
+	pinMode(21, OUTPUT);
+	digitalWrite(21, 0);
+	pinMode(22, OUTPUT);
+	digitalWrite(22, 0);
+	pinMode(25, OUTPUT);
+	digitalWrite(25, 0);
+
 	// esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 	// WiFi.mode(WIFI_STA);
 
@@ -1135,6 +1206,12 @@ void setup() {
 		pServer->getAdvertising()->start();
 		Serial.println("Waiting a client connection to notify...");
 	#endif
+
+	// Once ESPNow is successfully Init, we will register for recv CB to
+	// get recv packer info
+	set_all_pixel(128,0,0,0);
+
+	esp_now_register_recv_cb(OnDataRecv);
 }
 
 void loop(void) {
