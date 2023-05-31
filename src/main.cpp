@@ -4,6 +4,8 @@
 	#include <WiFi.h>
 #endif
 
+// #define PRINT_DEBUG
+
 
 #ifdef USE_FASTLED
 	// #define FASTLED_ESP32_I2S
@@ -245,6 +247,11 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	bool deviceConnected = false;
 	bool oldDeviceConnected = false;
 	uint8_t txValue = 0;
+	uint8_t image_receive_mode = false;
+	uint32_t byte_to_store = 0;
+	uint32_t img_receive_width = 0;
+	uint32_t img_receive_height = 0;
+	uint32_t img_receive_color_depth = 0;
 
 	class MyServerCallbacks : public NimBLEServerCallbacks {
 		void onConnect(NimBLEServer* pServer) {
@@ -255,14 +262,15 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 			deviceConnected = false;
 		}
 	};
+	
 
 	class MyCallbacks : public NimBLECharacteristicCallbacks {
 		void onWrite(NimBLECharacteristic* pCharacteristic) {
 			std::string rxValue = pCharacteristic->getValue();
-			Serial.print("Received Value: ");
-			for (int i = 0; i < rxValue.length(); i++)
-				Serial.print(rxValue[i]);
-			Serial.println();
+			Serial.printf("Received Value: %d:\n", rxValue.length());
+			// for (int i = 0; i < rxValue.length(); i++)
+			// 	Serial.print(rxValue[i]);
+			// Serial.println();
 
 			if (rxValue.length() > 0 && rxValue[0] == '!') {
 				switch (rxValue[1]) {
@@ -292,9 +300,44 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					case 'C':
 						set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
 						break;
+					case 'I':
+						{
+							anim = ANIM_UDP;
+							img_receive_color_depth = rxValue[2];
+							img_receive_width = rxValue[3] + (rxValue[4] << 8);
+							img_receive_height = rxValue[5] + (rxValue[6] << 8);
+							Serial.printf("Image: depth: %d, %dX%d\n", img_receive_color_depth, img_receive_width, img_receive_height);
+							image_receive_mode = true;
+							byte_to_store = 0;
+							for (int i = 7; i < rxValue.length(); i++) {
+								leds[byte_to_store++] = rxValue[i];
+							}
+						}
+						break;
 					default:
 						break;
 				}
+			}
+			else if (image_receive_mode) {
+				for (int i = 0; i < rxValue.length(); i++) {
+					if (byte_to_store < (LED_TOTAL * LED_SIZE))
+						leds[byte_to_store] = rxValue[i];
+					byte_to_store++;
+				}
+			}
+
+			if (byte_to_store >= (img_receive_width * img_receive_height * (img_receive_color_depth/8))) {
+				Serial.printf("Image complete\n");
+				display->fillScreenRGB888(0, 0, 0);
+				for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
+					if (img_receive_color_depth == 16)
+						display->drawPixel((i) % img_receive_width, (i) / img_receive_width, leds[i * 2] + (leds[i * 2 + 1] << 8));
+					else {
+						display->drawPixelRGB888((i) % img_receive_width, (i) / img_receive_width, leds[i*3], leds[i*3+1], leds[i*3+2]);
+					}
+				}
+				flip_matrix();
+				image_receive_mode = false;
 			}
 		}
 	};
@@ -758,7 +801,7 @@ void udp_receive(AsyncUDP_bigPacket packet) {
 						} else {
 							#if defined(USE_HUB75)
 								for (int i = 0; i < LED_TOTAL; i++) {
-									display->drawPixel(i%128, i/128, ((uint16_t*)leds)[i]);
+									display->drawPixel(i%160, i/160, ((uint16_t*)leds)[i]);
 								}
 								flip_matrix();
 							#endif
