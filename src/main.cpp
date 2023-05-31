@@ -272,7 +272,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 			// 	Serial.print(rxValue[i]);
 			// Serial.println();
 
-			if (rxValue.length() > 0 && rxValue[0] == '!') {
+			if (rxValue.length() > 0 && rxValue[0] == '!' && !image_receive_mode) {
 				switch (rxValue[1]) {
 					case 'B':
 						switch (rxValue[2]) {
@@ -326,15 +326,18 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 				}
 			}
 
-			if (byte_to_store >= (img_receive_width * img_receive_height * (img_receive_color_depth/8))) {
+			if (image_receive_mode) {
+				Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, (img_receive_width * img_receive_height * (img_receive_color_depth / 8) - byte_to_store));
+			}
+
+			if (image_receive_mode && byte_to_store >= (img_receive_width * img_receive_height * (img_receive_color_depth / 8))) {
 				Serial.printf("Image complete\n");
 				display->fillScreenRGB888(0, 0, 0);
 				for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
 					if (img_receive_color_depth == 16)
 						display->drawPixel((i) % img_receive_width, (i) / img_receive_width, leds[i * 2] + (leds[i * 2 + 1] << 8));
-					else {
+					else
 						display->drawPixelRGB888((i) % img_receive_width, (i) / img_receive_width, leds[i*3], leds[i*3+1], leds[i*3+2]);
-					}
 				}
 				flip_matrix();
 				image_receive_mode = false;
