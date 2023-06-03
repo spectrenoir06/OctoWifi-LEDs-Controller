@@ -1,5 +1,7 @@
 #include "miniz.h"
 
+#include <AnimatedGIF.h>
+
 #if defined(USE_WIFI_MANAGER) || defined(USE_AP)
 	#include <WiFi.h>
 #endif
@@ -172,7 +174,9 @@ static TaskHandle_t animeTaskHandle = NULL;
 	uint16_t nb;
 	unsigned long previousMillis = 0;
 	uint8_t anim = ANIM_START;
-	uint8_t next_anim = 0;
+	uint8_t next_anim = 1;
+	AnimatedGIF gif;
+	uint32_t next_frame=0;
 #else
 	uint8_t		anim = ANIM_UDP;
 #endif
@@ -268,9 +272,9 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 		void onWrite(NimBLECharacteristic* pCharacteristic) {
 			std::string rxValue = pCharacteristic->getValue();
 			Serial.printf("Received Value: %d:\n", rxValue.length());
-			// for (int i = 0; i < rxValue.length(); i++)
-			// 	Serial.print(rxValue[i]);
-			// Serial.println();
+			for (int i = 0; i < rxValue.length(); i++)
+				Serial.print(rxValue[i]);
+			Serial.println();
 
 			if (rxValue.length() > 0 && rxValue[0] == '!' && !image_receive_mode) {
 				switch (rxValue[1]) {
@@ -346,6 +350,134 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	};
 #endif
 
+
+#ifdef USE_GIF
+
+	float gif_scale;
+	int gif_off_x;
+	int gif_off_y;
+	File f;
+
+	// Draw a line of image directly on the LED Matrix
+	void GIFDraw(GIFDRAW* pDraw) {
+		uint8_t* s;
+		uint16_t* d, * usPalette, usTemp[320];
+		int x, y, iWidth;
+
+		iWidth = pDraw->iWidth;
+		if (iWidth > MATRIX_WIDTH)
+			iWidth = MATRIX_WIDTH;
+
+		usPalette = pDraw->pPalette;
+		y = pDraw->iY + pDraw->y; // current line
+
+		s = pDraw->pPixels;
+		if (pDraw->ucDisposalMethod == 2) // restore to background color
+		{
+			for (x = 0; x < iWidth; x++) {
+				if (s[x] == pDraw->ucTransparent)
+					s[x] = pDraw->ucBackground;
+			}
+			pDraw->ucHasTransparency = 0;
+		}
+		// Apply the new pixels to the main image
+		if (pDraw->ucHasTransparency) // if transparency used
+		{
+			uint8_t* pEnd, c, ucTransparent = pDraw->ucTransparent;
+			int x, iCount;
+			pEnd = s + pDraw->iWidth;
+			x = 0;
+			iCount = 0; // count non-transparent pixels
+			while (x < pDraw->iWidth) {
+				c = ucTransparent - 1;
+				d = usTemp;
+				while (c != ucTransparent && s < pEnd) {
+					c = *s++;
+					if (c == ucTransparent) // done, stop
+					{
+						s--; // back up to treat it like transparent
+					}
+					else // opaque
+					{
+						*d++ = usPalette[c];
+						iCount++;
+					}
+				} // while looking for opaque pixels
+				if (iCount) // any opaque pixels?
+				{
+					for (int xOffset = 0; xOffset < iCount; xOffset++) {
+						display->drawPixel(x + xOffset, y, usTemp[xOffset]); // 565 Color Format
+					}
+					x += iCount;
+					iCount = 0;
+				}
+				// no, look for a run of transparent pixels
+				c = ucTransparent;
+				while (c == ucTransparent && s < pEnd) {
+					c = *s++;
+					if (c == ucTransparent)
+						iCount++;
+					else
+						s--;
+				}
+				if (iCount) {
+					x += iCount; // skip these
+					iCount = 0;
+				}
+			}
+		}
+		else // does not have transparency
+		{
+			s = pDraw->pPixels;
+			// Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
+			for (x = 0; x < pDraw->iWidth; x++) {
+				display->drawPixel(x, y, usPalette[*s++]); // color 565
+			}
+		}
+	} /* GIFDraw() */
+
+	void* GIFOpenFile(const char* fname, int32_t* pSize) {
+		f = filesyteme.open(fname);
+		if (f) {
+			*pSize = f.size();
+			return (void*)&f;
+		}
+		return NULL;
+	} /* GIFOpenFile() */
+
+	void GIFCloseFile(void* pHandle) {
+		File* f = static_cast<File*>(pHandle);
+		if (f != NULL)
+			f->close();
+		} /* GIFCloseFile() */
+
+	int32_t GIFReadFile(GIFFILE* pFile, uint8_t* pBuf, int32_t iLen) {
+		int32_t iBytesRead;
+		iBytesRead = iLen;
+		File* f = static_cast<File*>(pFile->fHandle);
+		// Note: If you read a file all the way to the last byte, seek() stops working
+		if ((pFile->iSize - pFile->iPos) < iLen)
+			iBytesRead = pFile->iSize - pFile->iPos - 1; // <-- ugly work-around
+		if (iBytesRead <= 0)
+			return 0;
+		iBytesRead = (int32_t)f->read(pBuf, iBytesRead);
+		pFile->iPos = f->position();
+		return iBytesRead;
+	} /* GIFReadFile() */
+
+	int32_t GIFSeekFile(GIFFILE* pFile, int32_t iPosition) {
+		int i = micros();
+		File* f = static_cast<File*>(pFile->fHandle);
+		f->seek(iPosition);
+		pFile->iPos = (int32_t)f->position();
+		i = micros() - i;
+	  //  Serial.printf("Seek time = %d us\n", i);
+		return pFile->iPos;
+	} /* GIFSeekFile() */
+
+#endif
+
+
 unsigned long frameCounter = 0;
 unsigned long frameLastCounter = frameCounter;
 
@@ -360,24 +492,40 @@ void timerCallback() {
 
 #ifdef USE_ANIM
 void load_anim() {
-	Serial.println("Open animation");
+	// Serial.println("Open animation");
 
-	Serial.print("  FILE: ");
-	Serial.print(file.name());
-	Serial.print("\tSIZE: ");
-	Serial.print(file.size() / (1024.0 * 1024.0));
-	Serial.println(" Mo");
 
-	if (file.size() > 0) {
-		file.read(head, 5);
+	if (gif.open(file.path(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
+		Serial.print("load anim: ");
+		Serial.print(file.name());
+		Serial.print("\tsize: ");
+		Serial.print(file.size() / (1024.0 * 1024.0));
+		Serial.println(" Mo");
+		// gif_scale = 1;//(float)min(MATRIX_W, MATRIX_H) / max(gif.getCanvasWidth(), gif.getCanvasHeight());
+		// gif_off_x = ((int)MATRIX_W - gif.getCanvasWidth() * gif_scale) / 2;
+		// gif_off_y = ((int)MATRIX_H - gif.getCanvasHeight() * gif_scale) / 2;
 
-		fps = (head[2] << 8) | head[1];
-		nb = (head[4] << 8) | head[3];
-		wait = 1000.0 / fps;
-		if (wait > 2000)
-			wait = 100;
+		// if (gif_off_x < 0) gif_off_x = 0;
+		// if (gif_off_y < 0) gif_off_y = 0;
 
-		Serial.printf("  FPS: %02d; nb: %04d format: %d\n", fps, nb, head[0]);
+		// Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+		// Serial.flush();
+
+		// Serial.printf("  FPS: %02d; nb: %04d format: %d\n", fps, nb, head[0]);
+
+		#ifdef USE_BLE
+			if (deviceConnected) {
+				char str[100];// = (char*)malloc(100);
+				memset(str, 0, 100);
+				strcat(str, "load anim: ");
+				strcat(str, file.name());
+				strcat(str, "\r\n");
+				pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+				pTxCharacteristic->notify();
+				// free(ptr);
+			}
+		#endif
+
 		anim = ANIM_PLAY;
 	} else {
 		anim = ANIM_UDP;
@@ -388,107 +536,28 @@ void load_anim() {
 #define BUF_SIZE (256*1)
 
 void read_anim_frame() {
-	uint16_t compress_size;
-	unsigned long int un_size = 0;
-
-	static uint8_t s_inbuf[BUF_SIZE];
-	static uint8_t s_outbuf[BUF_SIZE];
-
-	mz_stream stream;
-	memset(&stream, 0, sizeof(stream));
-	stream.next_in = s_inbuf;
-	stream.avail_in = 0;
-	stream.next_out = s_outbuf;
-	stream.avail_out = BUF_SIZE;
-
 	
-	file.read((uint8_t*)&compress_size, 2);
-	uint16_t infile_remaining = compress_size;
-	int ret = mz_inflateInit(&stream);
-	if (ret) {
-		Serial.printf("inflateInit() failed! %s\n", mz_error(ret));
-		return;
-	}
 
-	for (;;){
-		int status;
-		if (!stream.avail_in){
-			uint n = MIN(BUF_SIZE, infile_remaining);
-
-			if (file.read(s_inbuf, n) != n){
-				printf("Failed reading from input file!\n");
-				return;
-			}
-
-			stream.next_in = s_inbuf;
-			stream.avail_in = n;
-			infile_remaining -= n;
-		}
-
-		status = mz_inflate(&stream, MZ_SYNC_FLUSH);
-
-		if ((status == MZ_STREAM_END) || (!stream.avail_out)){
-			uint n = BUF_SIZE - stream.avail_out;
-			#ifdef USE_HUB75
-				memcpy(leds + un_size, s_outbuf, n);
-			#else
-				if (head[0] == LED_Z_565)
-					memcpy(buffer + un_size, s_outbuf, n);
-				else
-					memcpy(leds + un_size, s_outbuf, n);
-			#endif
-			un_size+=n;
-			stream.next_out = s_outbuf;
-			stream.avail_out = BUF_SIZE;
-		}
-
-		if (status == MZ_STREAM_END)
-			break;
-		else if (status != MZ_OK){
-			printf("inflate() failed with status %i!\n", status);
-			return;
-		}
-	}
-
-	if (mz_inflateEnd(&stream) != MZ_OK){
-		printf("inflateEnd() failed!\n");
-		return;
-	}
-
-	#if defined(USE_HUB75)
-		if (head[0] == LED_Z_888)
-			for (int i = 0; i < LED_TOTAL; i++)
-				display->drawPixelRGB888(i % MATRIX_W, i / MATRIX_W, leds[i * 3], leds[i * 3 + 1], leds[i * 3 + 2]);
-		else if (head[0] == LED_Z_565)
-			for (int i = 0; i < LED_TOTAL; i++)
-				display->drawPixel(i % MATRIX_W, i / MATRIX_W, ((uint16_t*)leds)[i]);
-	#else
-		if (head[0] == LED_Z_565) {
-			for (int i = 0; i < un_size/2; i++){
-				uint8_t r = ((((((uint16_t*)buffer)[i] >> 11) & 0x1F) * 527) + 23) >> 6;
-				uint8_t g = ((((((uint16_t*)buffer)[i] >> 5) & 0x3F) * 259) + 33) >> 6;
-				uint8_t b = (((((uint16_t*)buffer)[i] & 0x1F) * 527) + 23) >> 6;
-				#if defined(USE_FASTLED)
-					((CRGB*)leds)[i] = r << 16 | g << 8 | b;
-				#endif
-			}
-		} else {
-			
-		}
-	#endif
-
-	#if defined(USE_HUB75)
+	int t = millis();
+	int i;
+	// display->clearScreen();
+	if (gif.playFrame(false, &i)) {
+		next_frame = t + i;
 		flip_matrix();
-	#elif defined(USE_FASTLED)
-		LEDS.show();
-	#endif
+	}
+	else {
+		gif.reset();
+		// temp.close();
+		// temp = root.openNextFile();
+	}
+
 
 	frameCounter++;
 
-	if (!file.available()) { // loop
-		file.seek(0);
-		anim = ANIM_START;
-	}
+	// if (!file.available()) { // loop
+	// 	file.seek(0);
+	// 	anim = ANIM_START;
+	// }
 
 
 	// if (!file.available()) {
@@ -567,52 +636,45 @@ uint8_t button_isPress = 0;
 
 void playAnimeTask(void* parameter) {
 	#ifdef USE_ANIM
-		for (;;) {
-			if (digitalRead(0) == LOW || next_anim) {
-				if (!button_isPress || next_anim) {
-					button_isPress = 1;
-					next_anim = 0;
-					Serial.println("next_anim()");
-					anim = ANIM_START;
-					file.close();
-					file = root.openNextFile();
-					if (!file) {
-						root.close();
-						root = filesyteme.open("/");
-						file = root.openNextFile();
-					}
-					#ifdef USE_BLE
-						if (deviceConnected) {
-							char *str = (char*)malloc(100);
-							memset(str, 0, 100);
-							strcat(str, "load anim: ");
-							strcat(str, file.name());
-							strcat(str, "\r\n");
-							pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-							pTxCharacteristic->notify();
-							// free(ptr);
-						}
-					#endif
-					vTaskDelay(20 / portTICK_PERIOD_MS);
-				}
-			} else
-				button_isPress = 0;
+		gif.begin(LITTLE_ENDIAN_PIXELS);
+		char szDir[] = "/GIF"; // play all GIFs in this directory on the SD card
+		File root;
+		root = filesyteme.open(szDir);
 
-			switch (anim) {
-				case ANIM_START:
-					load_anim();
-					break;
-				case ANIM_PLAY:
-					if (millis() - previousMillis >= wait) {
-						previousMillis = millis();
-						read_anim_frame();
-						// vTaskDelay(wait / portTICK_PERIOD_MS);
+		if (root) {
+			for (;;) {
+				if (digitalRead(0) == LOW || next_anim) {
+					if (!button_isPress || next_anim) {
+						button_isPress = 1;
+						next_anim = 0;
+						anim = ANIM_START;
+						file.close();
+						file = root.openNextFile();
+						if (!file) {
+							root.close();
+							root = filesyteme.open(szDir);
+							file = root.openNextFile();
+						}
+						// vTaskDelay(20 / portTICK_PERIOD_MS);
 					}
-					break;
-				case ANIM_UDP:
-					break;
+				} else
+					button_isPress = 0;
+
+				switch (anim) {
+					case ANIM_START:
+						load_anim();
+						break;
+					case ANIM_PLAY:
+						if (millis() >= next_frame ) {
+							previousMillis = millis();
+							read_anim_frame();
+						}
+						break;
+					case ANIM_UDP:
+						break;
+				}
+				// vTaskDelay(1 / portTICK_PERIOD_MS);
 			}
-			vTaskDelay(1 / portTICK_PERIOD_MS);
 		}
 	#endif
 
