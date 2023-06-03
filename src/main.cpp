@@ -515,14 +515,13 @@ void load_anim() {
 
 		#ifdef USE_BLE
 			if (deviceConnected) {
-				char str[100];// = (char*)malloc(100);
+				char str[100];
 				memset(str, 0, 100);
 				strcat(str, "load anim: ");
 				strcat(str, file.name());
 				strcat(str, "\r\n");
 				pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
 				pTxCharacteristic->notify();
-				// free(ptr);
 			}
 		#endif
 
