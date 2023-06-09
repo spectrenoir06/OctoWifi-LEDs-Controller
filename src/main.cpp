@@ -1,5 +1,4 @@
 #include "miniz.h"
-
 #include <AnimatedGIF.h>
 
 #if defined(USE_WIFI_MANAGER) || defined(USE_AP)
@@ -258,6 +257,9 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	uint32_t img_receive_height = 0;
 	uint32_t img_receive_color_depth = 0;
 	File f_tmp;
+	uint8_t change_anim = 0;
+	int timeout_var = 0;
+	#define timeout_time 3000; // ms
 
 	class MyServerCallbacks : public NimBLEServerCallbacks {
 		void onConnect(NimBLEServer* pServer) {
@@ -318,6 +320,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 							for (int i = 7; i < rxValue.length(); i++) {
 								leds[byte_to_store++] = rxValue[i];
 							}
+							timeout_var = millis() + timeout_time;
 						}
 						break;
 					case 'L': // List files
@@ -334,6 +337,10 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 								pTxCharacteristic->notify();
 								tmp_file = tmp_root.openNextFile();
 							}
+							memset(str, 0, 255);
+							strcat(str, "!L!");
+							pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+							pTxCharacteristic->notify();
 						}
 						break;
 					case 'D': // delete file
@@ -348,27 +355,45 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 						}
 						break;
 					case 'G': // add file
-					{
-						anim = ANIM_UDP;
-						gif_receive_mode = true;
-						const char* data = rxValue.c_str();
-						char str[255];
-						memset(str, 0, 255);
-						strcat(str, "/GIF/");
-						strcat(str, data + 2);
-						Serial.printf("add %s\n", data + 2);
-						f_tmp = filesyteme.open(str, "w", true);
-						int len = strlen(data + 2);
-						for (int i = 2 + len + 1; i < rxValue.length(); i++) {
-							f_tmp.write(rxValue[i]);
+						{
+							anim = ANIM_UDP;
+							gif_receive_mode = true;
+							const char* data = rxValue.c_str();
+							char str[255];
+							memset(str, 0, 255);
+							strcat(str, "/GIF/");
+							strcat(str, data + 2);
+							Serial.printf("add %s\n", data + 2);
+							f_tmp = filesyteme.open(str, "w", true);
+							int len = strlen(data + 2);
+							for (int i = 2 + len + 1; i < rxValue.length(); i++) {
+								f_tmp.write(rxValue[i]);
+							}
+							timeout_var = millis() + timeout_time;
 						}
-					}
-					break;
+						break;
+					case 'P':
+						{
+							const char* data = rxValue.c_str();
+							char str[255];
+							memset(str, 0, 255);
+							strcat(str, "/GIF/");
+							strcat(str, data+2);
+							char *ptr = strchr(str, '\n');
+							if (ptr)
+								*ptr = 0;
+							Serial.printf("Open %s\n", str);
+							file.close();
+							file = filesyteme.open(str);
+							anim = ANIM_START;
+						}
+						break;
 					default:
 						break;
 				}
 			}
 			else if (image_receive_mode) {
+				timeout_var = millis() + timeout_time;
 				for (int i = 0; i < rxValue.length(); i++) {
 					if (byte_to_store < (LED_TOTAL * LED_SIZE))
 						leds[byte_to_store] = rxValue[i];
@@ -376,6 +401,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 				}
 			}
 			else if (gif_receive_mode) {
+				timeout_var = millis() + timeout_time;
 				if (rxValue[0] == '!' && rxValue[1] == 'G') {
 					gif_receive_mode = false;
 					Serial.printf("receive GIF OK\n");
@@ -383,6 +409,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					file = filesyteme.open(tmp);
 					anim = ANIM_START;
 					f_tmp.close();
+					timeout_var = 0;
 				} else {
 					for (int i = 0; i < rxValue.length(); i++) {
 						f_tmp.write(rxValue[i]);
@@ -392,6 +419,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 
 			if (image_receive_mode) {
 				Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, (img_receive_width * img_receive_height * (img_receive_color_depth / 8) - byte_to_store));
+				timeout_var = millis() + timeout_time;
 				if (byte_to_store >= (img_receive_width * img_receive_height * (img_receive_color_depth / 8))) {
 					Serial.printf("Image complete\n");
 					display->fillScreenRGB888(0, 0, 0);
@@ -403,6 +431,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					}
 					flip_matrix();
 					image_receive_mode = false;
+					timeout_var = 0;
 				}
 			}
 		}
@@ -551,9 +580,9 @@ void timerCallback() {
 
 #ifdef USE_ANIM
 void load_anim() {
-	Serial.println("Open animation");
+	Serial.printf("Open animation: '%s'\n", file.path());
 
-
+	display->clearScreen();
 	if (gif.open(file.path(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
 		Serial.print("load anim: ");
 		Serial.print(file.name());
@@ -576,7 +605,7 @@ void load_anim() {
 			if (deviceConnected) {
 				char str[100];
 				memset(str, 0, 100);
-				strcat(str, "load anim: ");
+				strcat(str, "!P");
 				strcat(str, file.name());
 				strcat(str, "\r\n");
 				pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
@@ -728,6 +757,13 @@ void playAnimeTask(void* parameter) {
 						}
 						break;
 					case ANIM_UDP:
+						if (timeout_var != 0 && millis() > timeout_var) {
+							anim = ANIM_START;
+							image_receive_mode = false;
+							gif_receive_mode = false;
+							Serial.printf("timemout\n");
+							timeout_var = 0;
+						}
 						break;
 				}
 				vTaskDelay(1 / portTICK_PERIOD_MS);
