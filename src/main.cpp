@@ -62,7 +62,7 @@ const int SD_MISO = 2;
 		#include "FS.h"
 		#include "SD.h"
 		#include "SPI.h"
-		#define filesyteme SD
+		#define filesystem SD
 		#ifdef USE_FTP
 			#include "ESP32FtpServer.h"
 		#endif
@@ -70,14 +70,14 @@ const int SD_MISO = 2;
 	#ifdef USE_SD_MMC
 		#include "FS.h"
 		#include "SD_MMC.h"
-		#define filesyteme SD_MMC
+		#define filesystem SD_MMC
 		#ifdef USE_FTP
 			#include "ESP32FtpServer.h"
 		#endif
 	#endif
 	#ifdef USE_SPIFFS
 		#include "SPIFFS.h"
-		#define filesyteme SPIFFS
+		#define filesystem SPIFFS
 		#ifdef USE_FTP
 			#include "ESP8266FtpServer.h"
 		#endif
@@ -253,6 +253,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	uint8_t image_receive_mode = false;
 	uint8_t gif_receive_mode = false;
 	uint32_t byte_to_store = 0;
+	uint32_t data_size = 0;
 	uint32_t img_receive_width = 0;
 	uint32_t img_receive_height = 0;
 	uint32_t img_receive_color_depth = 0;
@@ -323,15 +324,17 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 							Serial.printf("Image: depth: %d, %dX%d\n", img_receive_color_depth, img_receive_width, img_receive_height);
 							image_receive_mode = true;
 							byte_to_store = 0;
+							data_size = img_receive_width * img_receive_height * (img_receive_color_depth / 8);
 							for (int i = 7; i < rxValue.length(); i++) {
 								leds[byte_to_store++] = rxValue[i];
+
 							}
 							timeout_var = millis() + timeout_time;
 						}
 						break;
 					case 'L': // List files
 						{
-							File tmp_root = filesyteme.open("/GIF");
+							File tmp_root = filesystem.open("/GIF");
 							File tmp_file = tmp_root.openNextFile();
 							char str[255];
 							while(tmp_file) {
@@ -357,7 +360,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 							strcat(str, "/GIF/");
 							strcat(str, data+2);
 							Serial.printf("Remove %s\n", str);
-							filesyteme.remove(str);
+							filesystem.remove(str);
 						}
 						break;
 					case 'G': // add file
@@ -368,12 +371,15 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 							char str[255];
 							memset(str, 0, 255);
 							strcat(str, "/GIF/");
-							strcat(str, data + 2);
-							Serial.printf("add %s\n", data + 2);
-							f_tmp = filesyteme.open(str, "w", true);
-							int len = strlen(data + 2);
-							for (int i = 2 + len + 1; i < rxValue.length(); i++) {
+							strcat(str, data + 2 + 4);
+							Serial.printf("add %s\n", data + 2 + 4);
+							f_tmp = filesystem.open(str, "w", true);
+							int len = strlen(data + 2 + 4);
+							uint32_t data_size = *(uint32_t*)(data + 2);
+							Serial.printf("gif size = %d\n", data_size);
+							for (int i = 2 + 4 + len + 1; i < rxValue.length(); i++) {
 								f_tmp.write(rxValue[i]);
+								byte_to_store++;
 							}
 							timeout_var = millis() + timeout_time;
 							time_reveice = millis();
@@ -391,7 +397,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 								*ptr = 0;
 							Serial.printf("Open %s\n", str);
 							file.close();
-							file = filesyteme.open(str);
+							file = filesystem.open(str);
 							anim = ANIM_START;
 						}
 						break;
@@ -400,7 +406,6 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 				}
 			}
 			else if (image_receive_mode) {
-				timeout_var = millis() + timeout_time;
 				for (int i = 0; i < rxValue.length(); i++) {
 					if (byte_to_store < (LED_TOTAL * LED_SIZE))
 						leds[byte_to_store] = rxValue[i];
@@ -408,27 +413,16 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 				}
 			}
 			else if (gif_receive_mode) {
-				timeout_var = millis() + timeout_time;
-				if (rxValue[0] == '!' && rxValue[1] == 'G') {
-					gif_receive_mode = false;
-					Serial.printf("receive GIF OK\n");
-					const char* tmp = f_tmp.path();
-					file = filesyteme.open(tmp);
-					anim = ANIM_START;
-					f_tmp.close();
-					timeout_var = 0;
-					Serial.printf("time to receive gig: %dms\n", millis() - time_reveice);
-				} else {
-					for (int i = 0; i < rxValue.length(); i++) {
-						f_tmp.write(rxValue[i]);
-					}
+				for (int i = 0; i < rxValue.length(); i++) {
+					f_tmp.write(rxValue[i]);
+					byte_to_store++;
 				}
 			}
 
 			if (image_receive_mode) {
-				Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, (img_receive_width * img_receive_height * (img_receive_color_depth / 8) - byte_to_store));
+				Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
 				timeout_var = millis() + timeout_time;
-				if (byte_to_store >= (img_receive_width * img_receive_height * (img_receive_color_depth / 8))) {
+				if (byte_to_store >= data_size) {
 					Serial.printf("Image complete\n");
 					display->fillScreenRGB888(0, 0, 0);
 					for (int i = 0; i < (img_receive_width * img_receive_height); i++) {
@@ -440,6 +434,21 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					flip_matrix();
 					image_receive_mode = false;
 					timeout_var = 0;
+				}
+			}
+
+			if (gif_receive_mode) {
+				Serial.printf("Byte receive: %d, wait: %d\n", byte_to_store, data_size - byte_to_store);
+				timeout_var = millis() + timeout_time;
+				if (byte_to_store >= data_size) {
+					gif_receive_mode = false;
+					Serial.printf("receive GIF OK\n");
+					const char* tmp = f_tmp.path();
+					file = filesystem.open(tmp);
+					anim = ANIM_START;
+					f_tmp.close();
+					timeout_var = 0;
+					Serial.printf("time to receive gif: %dms\n", millis() - time_reveice);
 				}
 			}
 		}
@@ -533,7 +542,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	} /* GIFDraw() */
 
 	void* GIFOpenFile(const char* fname, int32_t* pSize) {
-		f = filesyteme.open(fname);
+		f = filesystem.open(fname);
 		if (f) {
 			*pSize = f.size();
 			return (void*)&f;
@@ -661,7 +670,7 @@ void read_anim_frame() {
 	// 	file = root.openNextFile();
 	// 	if (!file) {
 	// 		root.close();
-	// 		root = filesyteme.open("/");
+	// 		root = filesystem.open("/");
 	// 		file = root.openNextFile();
 	// 	}
 	// }
@@ -671,10 +680,10 @@ void read_anim_frame() {
 #ifdef USE_CONFIG
 void saveConfiguration(const char* filename, const Config& config) {
 	// Delete existing file, otherwise the configuration is appended to the file
-	filesyteme.remove(filename);
+	filesystem.remove(filename);
 
 	// Open file for writing
-	File file = filesyteme.open(filename, FILE_WRITE);
+	File file = filesystem.open(filename, FILE_WRITE);
 	if (!file) {
 		Serial.println(F("Failed to create file"));
 		return;
@@ -733,7 +742,7 @@ void playAnimeTask(void* parameter) {
 	#ifdef USE_ANIM
 		gif.begin(LITTLE_ENDIAN_PIXELS);
 		File root;
-		root = filesyteme.open("/GIF");
+		root = filesystem.open("/GIF");
 
 		if (root) {
 			for (;;) {
@@ -746,7 +755,7 @@ void playAnimeTask(void* parameter) {
 						file = root.openNextFile();
 						if (!file) {
 							root.close();
-							root = filesyteme.open("/GIF");
+							root = filesystem.open("/GIF");
 							file = root.openNextFile();
 						}
 						// vTaskDelay(20 / portTICK_PERIOD_MS);
@@ -1104,12 +1113,12 @@ void setup() {
 			// Initialize SD card
 			SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
 			for (int i=0; i<20; i++) {
-				if (!filesyteme.begin(SD_CS, SPI)) {
+				if (!filesystem.begin(SD_CS, SPI)) {
 					Serial.println("Card Mount Failed");
 					anim_on = false;
 					delay(10);
 				} else {
-					// root = filesyteme.open("/");
+					// root = filesystem.open("/");
 					// file = root.openNextFile();
 					anim_on = true;
 					break;
@@ -1122,25 +1131,25 @@ void setup() {
 			pinMode(15, PULLUP);
 			pinMode(14, PULLUP);
 			pinMode(13, PULLUP);
-			if (!filesyteme.begin("/sdcard", true)) {
+			if (!filesystem.begin("/sdcard", true)) {
 				Serial.println("Card Mount Failed");
 				anim_on = false;
 			} else {
-				// root = filesyteme.open("/");
+				// root = filesystem.open("/");
 				// file = root.openNextFile();
 				anim_on = true;
 			}
 		#endif
 
 		#ifdef USE_SPIFFS
-			if (!filesyteme.begin(true)) {
+			if (!filesystem.begin(true)) {
 				Serial.println("An Error has occurred while mounting SPIFFS");
 				// ESP.restart();
 				anim_on = false;
 			} else {
 				Serial.println("mounting SPIFFS OK");
-				// root = filesyteme.open("/");
-				// file = filesyteme.open("/start.Z565", "r");
+				// root = filesystem.open("/");
+				// file = filesystem.open("/start.Z565", "r");
 				// if (!file.available())
 				// 	file = root.openNextFile();
 				anim_on = true;
