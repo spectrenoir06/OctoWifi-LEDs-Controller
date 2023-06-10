@@ -260,14 +260,20 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 	uint8_t change_anim = 0;
 	int timeout_var = 0;
 	#define timeout_time 3000; // ms
+	int time_reveice = 0;
 
 	class MyServerCallbacks : public NimBLEServerCallbacks {
-		void onConnect(NimBLEServer* pServer) {
+		void onConnect(NimBLEServer* pServer, ble_gap_conn_desc *desc) {
 			deviceConnected = true;
+			pServer->updateConnParams(desc->conn_handle, 0x6, 0x6, 0, 100);
 		};
 
 		void onDisconnect(NimBLEServer* pServer) {
 			deviceConnected = false;
+		}
+
+		void onMTUChange (uint16_t MTU, ble_gap_conn_desc *desc) {
+			Serial.printf("MTU change: %d\n", MTU);
 		}
 	};
 	
@@ -370,6 +376,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 								f_tmp.write(rxValue[i]);
 							}
 							timeout_var = millis() + timeout_time;
+							time_reveice = millis();
 						}
 						break;
 					case 'P':
@@ -410,6 +417,7 @@ void set_all_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
 					anim = ANIM_START;
 					f_tmp.close();
 					timeout_var = 0;
+					Serial.printf("time to receive gig: %dms\n", millis() - time_reveice);
 				} else {
 					for (int i = 0; i < rxValue.length(); i++) {
 						f_tmp.write(rxValue[i]);
