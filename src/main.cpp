@@ -278,6 +278,50 @@ static int lua_wrapper_clearDisplay(lua_State *lua_state) {
 	return 0;
 }
 
+static int lua_wrapper_setTextColor(lua_State *lua_state) {
+	int r = luaL_checkinteger(lua_state, 1);
+	int g = luaL_checkinteger(lua_state, 2);
+	int b = luaL_checkinteger(lua_state, 3);
+	display->setTextColor(display->color565(r,g,b));
+	return 0;
+}
+
+static int lua_wrapper_printText(lua_State *lua_state) {
+	size_t len = 0;
+	const char *str = luaL_checklstring(lua_state, 1, &len);
+	display->print(str);
+	return 0;
+}
+
+static int lua_wrapper_setCursor(lua_State *lua_state) {
+	int x = luaL_checkinteger(lua_state, 1);
+	int y = luaL_checkinteger(lua_state, 2);
+	display->setCursor(x,y);
+	return 0;
+}
+
+static int lua_wrapper_setTextSize(lua_State *lua_state) {
+	int size = luaL_checkinteger(lua_state, 1);
+	display->setTextSize(size);
+	return 0;
+}
+
+static int lua_wrapper_fillRect(lua_State *lua_state) {
+	int x = luaL_checkinteger(lua_state, 1);
+	int y = luaL_checkinteger(lua_state, 2);
+
+	int w = luaL_checkinteger(lua_state, 3);
+	int h = luaL_checkinteger(lua_state, 4);
+
+	int r = luaL_checkinteger(lua_state, 5);
+	int g = luaL_checkinteger(lua_state, 6);
+	int b = luaL_checkinteger(lua_state, 7);
+	display->fillRect(x, y, w, h, r, g, b);
+	return 0;
+}
+
+
+
 #ifdef USE_BLE
 	#include <NimBLEDevice.h>
 
@@ -315,6 +359,13 @@ void runLuaTask(void* parameter) {
 		lua->Lua_register("delay", (const lua_CFunction) &lua_wrapper_delay);
 		lua->Lua_register("millis", (const lua_CFunction) &lua_wrapper_millis);
 		lua->Lua_register("clearDisplay", (const lua_CFunction) &lua_wrapper_clearDisplay);
+
+		lua->Lua_register("setTextColor", (const lua_CFunction) &lua_wrapper_setTextColor);
+		lua->Lua_register("printText", (const lua_CFunction) &lua_wrapper_printText);
+		lua->Lua_register("setCursor", (const lua_CFunction) &lua_wrapper_setCursor);
+		lua->Lua_register("setTextSize", (const lua_CFunction) &lua_wrapper_setTextSize);
+		lua->Lua_register("fillRect", (const lua_CFunction) &lua_wrapper_fillRect);
+
 		Serial.println("Start task runLuaTask");
 		String str = lua_script;
 		String ret = lua->Lua_dostring(&str);
@@ -459,32 +510,6 @@ void runLuaTask(void* parameter) {
 							}
 							timeout_var = millis() + timeout_time;
 							time_reveice = millis();
-							//   print each letter with a fixed rainbow color
-							// display->clearScreen();
-							// display->setCursor(0, 0);
-							// display->setTextColor(display->color444(0,8,15));
-							// display->printf("load gif:\n");
-							// // display->setTextColor(display->color444(15,4,0));
-							// // display->printf("'%s'\n", data + 2 + 4);
-							// display->setTextColor(display->color444(15,15,0));
-							// display->print('x');
-							// display->setTextColor(display->color444(8,15,0));
-							// display->print('6');
-							// display->setTextColor(display->color444(8,0,15));
-							// display->print('4');
-
-							// Jump a half character
-							// display->setCursor(32, 0);
-							// display->setTextColor(display->color444(0,15,15));
-							// display->print("*");
-							// display->setTextColor(display->color444(15,0,0));
-							// display->print('R');
-							// display->setTextColor(display->color444(0,15,0));
-							// display->print('G');
-							// display->setTextColor(display->color444(0,0,15));
-							// display->print("B");
-							// display->setTextColor(display->color444(15,0,8));
-							// display->println("*");
 							flip_matrix();
 
 						}
@@ -620,7 +645,7 @@ void runLuaTask(void* parameter) {
 					BaseType_t result = xTaskCreatePinnedToCore(
 						runLuaTask,   /* Task function. */
 						"runLuaTask", /* String with name of task. */
-						1024 * 30,  /* Stack size in bytes. */
+						1024 * 20,  /* Stack size in bytes. */
 						NULL,	   /* Parameter passed as input of the task */
 						1,		   /* Priority of the task. */
 						&runLuaTaskHandle,	   /* Task handle. */
