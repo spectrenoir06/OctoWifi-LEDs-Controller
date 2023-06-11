@@ -212,6 +212,35 @@ uint8_t brightness = BRIGHTNESS;
 	SimpleTimer	timer;
 #endif
 
+#include <NimBLEDevice.h>
+
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+static NimBLEServer* pServer = NULL;
+NimBLECharacteristic* pTxCharacteristic;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint8_t txValue = 0;
+uint8_t image_receive_mode = false;
+uint8_t gif_receive_mode = false;
+uint8_t lua_receive_mode = false;
+uint32_t byte_to_store = 0;
+uint32_t data_size = 0;
+uint32_t img_receive_width = 0;
+uint32_t img_receive_height = 0;
+uint32_t img_receive_color_depth = 0;
+File f_tmp;
+uint8_t change_anim = 0;
+int timeout_var = 0;
+#define timeout_time 3000; // ms
+int time_reveice = 0;
+String lua_script = "";
+uint8_t run_lua = false;
+LuaWrapper *lua;
+uint8_t list_send_mode = false;
+
 #ifdef USE_HUB75
 	void flip_matrix() {
 		display->flipDMABuffer();
@@ -268,10 +297,15 @@ static int lua_wrapper_millis(lua_State *lua_state) {
 	return 1;
 }
 
-// static int lua_wrapper_printBLE(lua_State *lua_state) {
-// 	lua_pushnumber(lua_state, (lua_Number) millis());
-// 	return 1;
-// }
+static int lua_wrapper_printBLE(lua_State *lua_state) {
+	if (deviceConnected) {
+		size_t len = 0;
+		const char *str = luaL_checklstring(lua_state, 1, &len);
+		pTxCharacteristic->setValue((uint8_t*)str, len);
+		pTxCharacteristic->notify();
+	}
+	return 0;
+}
 
 static int lua_wrapper_clearDisplay(lua_State *lua_state) {
 	display->clearScreen();
@@ -320,51 +354,72 @@ static int lua_wrapper_fillRect(lua_State *lua_state) {
 	return 0;
 }
 
+static int lua_wrapper_colorWheel(lua_State *lua_state) {
+	uint8_t pos = luaL_checkinteger(lua_state, 1);
+	uint8_t r,g,b;
+	if(pos < 85) {
+		r = pos * 3;
+		g = 255 - pos * 3;
+		b = 0;
+	} else if(pos < 170) {
+		pos -= 85;
+		r = 255 - pos * 3;
+		g = 0;
+		b = pos * 3;
+	} else {
+		pos -= 170;
+		r = 0;
+		g = pos * 3;
+		b = 255 - pos * 3;
+	}
+	lua_pushinteger(lua_state, (lua_Integer)r);
+	lua_pushinteger(lua_state, (lua_Integer)g);
+	lua_pushinteger(lua_state, (lua_Integer)b);
+	return 3;
+}
+
+
+static int lua_wrapper_setTextWrap(lua_State *lua_state) {
+	if (lua_isboolean(lua_state, 1))
+		display->setTextWrap(lua_toboolean(lua_state, 1));
+	return 0;
+}
+
+
 
 
 #ifdef USE_BLE
-	#include <NimBLEDevice.h>
 
-	#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
-	#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-	#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-	static NimBLEServer* pServer = NULL;
-	NimBLECharacteristic* pTxCharacteristic;
-	bool deviceConnected = false;
-	bool oldDeviceConnected = false;
-	uint8_t txValue = 0;
-	uint8_t image_receive_mode = false;
-	uint8_t gif_receive_mode = false;
-	uint8_t lua_receive_mode = false;
-	uint32_t byte_to_store = 0;
-	uint32_t data_size = 0;
-	uint32_t img_receive_width = 0;
-	uint32_t img_receive_height = 0;
-	uint32_t img_receive_color_depth = 0;
-	File f_tmp;
-	uint8_t change_anim = 0;
-	int timeout_var = 0;
-	#define timeout_time 3000; // ms
-	int time_reveice = 0;
-	String lua_script = "";
-	uint8_t run_lua = false;
-	LuaWrapper *lua;
+void kill_lua_task() {
+	if (runLuaTaskHandle) {
+		vTaskDelete(runLuaTaskHandle);
+		runLuaTaskHandle = NULL;
+	}
+}
+
 
 void runLuaTask(void* parameter) {
 	{
 		lua = new LuaWrapper();
+		lua->Lua_register("clearDisplay", (const lua_CFunction) &lua_wrapper_clearDisplay);
 		lua->Lua_register("updateDisplay", (const lua_CFunction) &lua_wrapper_updateDisplay);
 		lua->Lua_register("drawPixel", (const lua_CFunction) &lua_wrapper_drawPixel);
+		lua->Lua_register("fillRect", (const lua_CFunction) &lua_wrapper_fillRect);
+		lua->Lua_register("colorWheel", (const lua_CFunction) &lua_wrapper_colorWheel);
+
 		lua->Lua_register("delay", (const lua_CFunction) &lua_wrapper_delay);
 		lua->Lua_register("millis", (const lua_CFunction) &lua_wrapper_millis);
-		lua->Lua_register("clearDisplay", (const lua_CFunction) &lua_wrapper_clearDisplay);
 
 		lua->Lua_register("setTextColor", (const lua_CFunction) &lua_wrapper_setTextColor);
+		lua->Lua_register("setTextWrap", (const lua_CFunction) &lua_wrapper_setTextWrap);
 		lua->Lua_register("printText", (const lua_CFunction) &lua_wrapper_printText);
 		lua->Lua_register("setCursor", (const lua_CFunction) &lua_wrapper_setCursor);
 		lua->Lua_register("setTextSize", (const lua_CFunction) &lua_wrapper_setTextSize);
-		lua->Lua_register("fillRect", (const lua_CFunction) &lua_wrapper_fillRect);
+		
+		lua->Lua_register("printBLE", (const lua_CFunction) &lua_wrapper_printBLE);
+		
+		
 
 		Serial.println("Start task runLuaTask");
 		String str = lua_script;
@@ -387,6 +442,23 @@ void runLuaTask(void* parameter) {
 	Serial.println("Ending task runLuaTask (should not happen oh no)");
 	runLuaTaskHandle = NULL;
 	vTaskDelete(NULL);
+}
+
+void print_progress(const char *str) {
+	display->fillScreen(0);
+	display->setCursor(4, 4);
+	display->setTextSize(1);
+	display->setTextColor(display->color565(255,255,255));
+	display->printf(str);
+	display->fillRect(4, 16, 64 - 4 * 2, 8, 0xFFFF);
+	display->fillRect(
+		4+1,
+		16+1,
+		map(byte_to_store, 0, data_size, 0, (64 - 4 * 2 - 2)),
+		8 - 2,
+		display->color444(0, 0x7b, 0xFF)
+	);
+	flip_matrix();
 }
 
 
@@ -440,10 +512,12 @@ void runLuaTask(void* parameter) {
 						}
 						break;
 					case 'C':
+						kill_lua_task();
 						set_all_pixel(rxValue[2], rxValue[3], rxValue[4], 0);
 						break;
 					case 'I':
 						{
+							kill_lua_task();
 							anim = ANIM_UDP;
 							img_receive_color_depth = rxValue[2];
 							img_receive_width = rxValue[3] + (rxValue[4] << 8);
@@ -461,21 +535,13 @@ void runLuaTask(void* parameter) {
 						break;
 					case 'L': // List files
 						{
-							File tmp_root = filesystem.open("/GIF");
-							File tmp_file = tmp_root.openNextFile();
-							char str[255];
-							while(tmp_file) {
-								memset(str, 0, 255);
-								strcat(str, "!L");
-								strcat(str, tmp_file.name());
-								pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-								pTxCharacteristic->notify();
-								tmp_file = tmp_root.openNextFile();
-							}
-							memset(str, 0, 255);
-							strcat(str, "!L!");
-							pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
-							pTxCharacteristic->notify();
+							list_send_mode = true;
+
+							// memset(str, 0, 255);
+							// strcat(str, "HELLLO !!!");
+							// pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+							// pTxCharacteristic->notify();
+							// Serial.printf("send end !L!\n");
 						}
 						break;
 					case 'D': // delete file
@@ -491,6 +557,7 @@ void runLuaTask(void* parameter) {
 						break;
 					case 'G': // add file
 						{
+							kill_lua_task();
 							anim = ANIM_UDP;
 							gif_receive_mode = true;
 							const char* data = rxValue.c_str();
@@ -538,10 +605,7 @@ void runLuaTask(void* parameter) {
 							data_size = *(uint32_t*)(data + 2);
 							Serial.printf("load lua size:%d\n", data_size);
 							byte_to_store = 0;
-							if (runLuaTaskHandle) {
-								vTaskDelete(runLuaTaskHandle);
-								runLuaTaskHandle = NULL;
-							}
+							kill_lua_task();
 							lua_script = "";
 							for (int i = 2 + 4; i < rxValue.length(); i++) {
 								lua_script += rxValue[i];
@@ -567,21 +631,6 @@ void runLuaTask(void* parameter) {
 					f_tmp.write(rxValue[i]);
 					byte_to_store++;
 				}
-				display->clearScreen();
-				display->setCursor(0, 0);
-				display->setTextColor(display->color444(0,8,15));
-				display->printf("load gif:\n");
-				display->fillRect(4, 16, 64 - 4 * 2, 8, 0xFFFF);
-				display->fillRect(
-					4+1,
-					16+1,
-					map(byte_to_store, 0, data_size, 0, (64 - 4 * 2 - 2)),
-					8 - 2,
-					display->color444(0, 0x7b, 0xFF)
-				);
-				flip_matrix();
-				// display->setTextColor(display->color444(15,4,0));
-				// display->printf("'%s'\n", data + 2 + 4);
 			}
 			else if (lua_receive_mode) {
 				for (int i = 0; i < rxValue.length(); i++) {
@@ -606,6 +655,9 @@ void runLuaTask(void* parameter) {
 					image_receive_mode = false;
 					timeout_var = 0;
 				}
+				else {
+					print_progress("load img:");
+				}
 			}
 
 			if (gif_receive_mode) {
@@ -621,6 +673,9 @@ void runLuaTask(void* parameter) {
 					timeout_var = 0;
 					Serial.printf("time to receive gif: %dms\n", millis() - time_reveice);
 				}
+				else {
+					print_progress("load gif:");
+				}
 			}
 			
 
@@ -632,11 +687,6 @@ void runLuaTask(void* parameter) {
 					Serial.printf("receive Lua OK\n");
 					Serial.printf("time to receive Lua: %dms\n", millis() - time_reveice);
 					timeout_var = 0;
-
-					// Serial.printf( "Task Name\tStatus\tPrio\tHWM\tTask\tAffinity\n");
-					// char stats_buffer[1024];
-					// vTaskList(stats_buffer);
-					// Serial.printf("%s\n", stats_buffer);
 					if (lua) {
 						delete lua;
 						lua = NULL;
@@ -652,7 +702,10 @@ void runLuaTask(void* parameter) {
 						1
 					);
 					Serial.printf("xTaskCreatePinnedToCore returned %d\n", result);
-				} 
+				}
+				else {
+					print_progress("load lua:");
+				}
 			}
 		}
 	};
@@ -985,6 +1038,26 @@ void playAnimeTask(void* parameter) {
 							timeout_var = 0;
 						}
 						break;
+				}
+				if (list_send_mode) {
+					list_send_mode = false;
+					Serial.printf("Print list files:\n");
+					File tmp_root = filesystem.open("/GIF");
+					File tmp_file = tmp_root.openNextFile();
+					char str[255];
+					while(tmp_file) {
+						memset(str, 0, 255);
+						strcat(str, "!L");
+						strcat(str, tmp_file.name());
+						pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+						pTxCharacteristic->notify();
+						Serial.println(str);
+						tmp_file = tmp_root.openNextFile();
+					}
+					memset(str, 0, 255);
+					strcat(str, "!L!");
+					pTxCharacteristic->setValue((uint8_t*)str, strlen(str));
+					pTxCharacteristic->notify();
 				}
 				vTaskDelay(1 / portTICK_PERIOD_MS);
 			}
@@ -1321,6 +1394,14 @@ void setup() {
 				if (!filesystem.begin(SD_CS, SPI)) {
 					Serial.println("Card Mount Failed");
 					anim_on = false;
+						display->fillScreen(0);
+						display->setCursor(4, 4);
+						display->setTextSize(1);
+						display->setTextColor(display->color565(255,255,255));
+						display->printf("Can't mnt");
+						display->setCursor(4, 4+9);
+						display->printf("SD Card!");
+						flip_matrix();
 					delay(10);
 				} else {
 					// root = filesystem.open("/");
